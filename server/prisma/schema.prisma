@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  name               String
+  email              String   @unique
+  password           String
+
+  isVerified         Boolean  @default(false)
+
+  verifyToken        String?
+  passwordResetToken String?
+  passwordResetExpiry DateTime?
+
+  createdAt          DateTime @default(now())
+
+  ownedServers Server[]
+  memberships  Membership[]
+}
+
+model Server {
+  id         Int      @id @default(autoincrement())
+  name       String
+  inviteCode String   @unique
+  ownerId    Int
+  createdAt  DateTime @default(now())
+
+  owner   User         @relation(fields: [ownerId], references: [id])
+  members Membership[]
+}
+
+model Membership {
+  id       Int      @id @default(autoincrement())
+  userId   Int
+  serverId Int
+  joinedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  server Server @relation(fields: [serverId], references: [id])
+
+  @@unique([userId, serverId])
+}
