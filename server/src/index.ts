@@ -6,9 +6,10 @@ import http from "http";
 import authRoutes from "./routes/authRoutes";
 import userRoutes from "./routes/userRoutes";
 import serverRoutes from "./routes/serverRoutes";
+import messageRoutes from "./routes/messageRoutes";
+import fileRoutes from "./routes/fileRoutes";
 
 import { initSocket } from "./socket/socket";
-import messageRoutes from "./routes/messageRoutes";
 
 dotenv.config();
 
@@ -45,6 +46,11 @@ app.use(
 app.use(
   "/api/message",
   messageRoutes
+);
+
+app.use(
+  "/api/file",
+  fileRoutes
 );
 
 // ================= Root =================

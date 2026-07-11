@@ -1,25 +1,23 @@
 import api from "./api";
 
-export const getMyWorkspaces = async () => {
-  return api.get("/server/my");
+export const createWorkspace = (name: string) => {
+  return api.post("/server/create", { name });
 };
 
-export const createWorkspace = async (name: string) => {
-  return api.post("/server/create", {
-    name,
-  });
-};
-
-export const joinWorkspace = async (inviteCode: string) => {
+export const joinWorkspace = (inviteCode: string) => {
   return api.post("/server/join", {
     inviteCode,
   });
 };
 
-export const getWorkspace = async (id: number) => {
+export const getMyWorkspaces = () => {
+  return api.get("/server/my");
+};
+
+export const getWorkspace = (id: number) => {
   return api.get(`/server/${id}`);
 };
 
-export const getWorkspaceMembers = async (id: number) => {
+export const getWorkspaceMembers = (id: number) => {
   return api.get(`/server/members/${id}`);
 };

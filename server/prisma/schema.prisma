@@ -55,18 +55,22 @@ model Membership {
 }
 
 model File {
-  id          Int       @id @default(autoincrement())
-  name        String
-  content     String    @default("")
+  id           Int      @id @default(autoincrement())
 
-  serverId    Int
-  uploadedBy  Int
+  name         String
+  url          String
+  publicId     String
+  resourceType String   @default("")
+  mimeType     String   @default("")
+  size         Int      @default(0)
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  serverId     Int
+  uploadedBy   Int
 
-  server       Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  uploader     User      @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  server       Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  uploader     User   @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
 }
 
 model Message {
