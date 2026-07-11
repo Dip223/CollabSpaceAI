@@ -5,11 +5,14 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import Workspace from "./pages/Workspace";
+
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   return (
     <Routes>
+
       {/* Redirect Root */}
       <Route
         path="/"
@@ -17,6 +20,7 @@ function App() {
       />
 
       {/* Public Routes */}
+
       <Route
         path="/login"
         element={<Login />}
@@ -37,7 +41,8 @@ function App() {
         element={<ResetPassword />}
       />
 
-      {/* Protected Route */}
+      {/* Protected Dashboard */}
+
       <Route
         path="/dashboard"
         element={
@@ -47,11 +52,24 @@ function App() {
         }
       />
 
+      {/* Protected Workspace */}
+
+      <Route
+        path="/workspace/:id"
+        element={
+          <ProtectedRoute>
+            <Workspace />
+          </ProtectedRoute>
+        }
+      />
+
       {/* 404 */}
+
       <Route
         path="*"
         element={<Navigate to="/login" replace />}
       />
+
     </Routes>
   );
 }

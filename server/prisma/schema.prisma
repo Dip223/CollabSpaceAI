@@ -8,42 +8,77 @@ datasource db {
 }
 
 model User {
-  id                 Int      @id @default(autoincrement())
-  name               String
-  email              String   @unique
-  password           String
+  id                  Int       @id @default(autoincrement())
+  name                String
+  email               String    @unique
+  password            String
 
-  isVerified         Boolean  @default(false)
+  isVerified          Boolean   @default(false)
 
-  verifyToken        String?
-  passwordResetToken String?
+  verifyToken         String?
+  passwordResetToken  String?
   passwordResetExpiry DateTime?
 
-  createdAt          DateTime @default(now())
+  createdAt           DateTime  @default(now())
 
-  ownedServers Server[]
-  memberships  Membership[]
+  // Relations
+  ownedServers        Server[]
+  memberships         Membership[]
+  uploadedFiles       File[]
+  messages            Message[]
 }
 
 model Server {
-  id         Int      @id @default(autoincrement())
-  name       String
-  inviteCode String   @unique
-  ownerId    Int
-  createdAt  DateTime @default(now())
+  id          Int       @id @default(autoincrement())
+  name        String
+  inviteCode  String    @unique
+  ownerId     Int
+  createdAt   DateTime  @default(now())
 
-  owner   User         @relation(fields: [ownerId], references: [id])
-  members Membership[]
+  // Relations
+  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members      Membership[]
+  files        File[]
+  messages     Message[]
 }
 
 model Membership {
-  id       Int      @id @default(autoincrement())
-  userId   Int
-  serverId Int
-  joinedAt DateTime @default(now())
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  serverId   Int
+  joinedAt   DateTime  @default(now())
 
-  user   User   @relation(fields: [userId], references: [id])
-  server Server @relation(fields: [serverId], references: [id])
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
 
   @@unique([userId, serverId])
+}
+
+model File {
+  id          Int       @id @default(autoincrement())
+  name        String
+  content     String    @default("")
+
+  serverId    Int
+  uploadedBy  Int
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  server       Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  uploader     User      @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id          Int       @id @default(autoincrement())
+
+  content     String
+
+  senderId    Int
+  serverId    Int
+
+  createdAt   DateTime  @default(now())
+
+  sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
 }

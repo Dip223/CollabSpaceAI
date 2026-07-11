@@ -11,7 +11,8 @@ import {
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+
+import api from "../services/api";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -30,23 +31,48 @@ export default function Register() {
     });
   };
 
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleRegister = async (
+  e: React.FormEvent
+) => {
 
-    if (form.password !== form.confirmPassword) {
-      alert("Passwords do not match");
-      return;
-    }
+  e.preventDefault();
 
-    // Backend later
-    navigate("/dashboard");
-  };
+  if (form.password !== form.confirmPassword) {
+    alert("Passwords do not match");
+    return;
+  }
+
+  try {
+
+    const res = await api.post(
+      "/auth/register",
+      {
+        name: form.username,
+        email: form.email,
+        password: form.password,
+      }
+    );
+
+    alert(res.data.message);
+
+    navigate("/login");
+
+  } catch (err: any) {
+
+    alert(
+      err.response?.data?.message ||
+      "Registration Failed"
+    );
+
+  }
+
+};
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#1e1f22] relative overflow-hidden">
 
       {/* Background */}
-      <div className="absolute inset-0">
+      <div className="absolute inset-0 pointer-events-none">
         <div className="absolute left-0 top-0 h-[500px] w-[500px] rounded-full bg-indigo-700/20 blur-[180px]" />
         <div className="absolute right-0 bottom-0 h-[450px] w-[450px] rounded-full bg-cyan-500/10 blur-[180px]" />
       </div>
@@ -184,18 +210,17 @@ export default function Register() {
 
               </div>
 
-              <Button
-                type="submit"
-                className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-base"
-              >
-                Create Account
-
-                <ArrowRight
-                  size={18}
-                  className="ml-2"
-                />
-
-              </Button>
+    <button
+  type="submit"
+  className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white flex items-center justify-center"
+>
+  Create Account
+  <ArrowRight
+    size={18}
+    className="ml-2"
+  />
+</button>
+          
 
             </form>
 

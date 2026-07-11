@@ -127,9 +127,16 @@ export const login = async (
     );
 
     return res.json({
-      message: "Login successful",
-      token,
-    });
+  message: "Login successful",
+  token,
+  user: {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    isVerified: user.isVerified,
+  },
+});
+
   } catch (error) {
     console.log(error);
 

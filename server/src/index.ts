@@ -1,18 +1,31 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import http from "http";
 
 import authRoutes from "./routes/authRoutes";
 import userRoutes from "./routes/userRoutes";
 import serverRoutes from "./routes/serverRoutes";
 
+import { initSocket } from "./socket/socket";
+import messageRoutes from "./routes/messageRoutes";
+
 dotenv.config();
 
 const app = express();
 
-app.use(cors());
+// ================= Middleware =================
+
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
 
 app.use(express.json());
+
+// ================= Routes =================
 
 app.use(
   "/api/auth",
@@ -29,21 +42,29 @@ app.use(
   serverRoutes
 );
 
+app.use(
+  "/api/message",
+  messageRoutes
+);
+
+// ================= Root =================
+
 app.get("/", (req, res) => {
-
-  res.send(
-    "CollabSpace API Running"
-  );
-
+  res.send("CollabSpace API Running 🚀");
 });
 
-const PORT =
-process.env.PORT || 5000;
+// ================= HTTP Server =================
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
 
-  console.log(
-    `Server running on ${PORT}`
-  );
+// ================= Socket.IO =================
 
+initSocket(server);
+
+// ================= Listen =================
+
+const PORT = Number(process.env.PORT) || 5000;
+
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
