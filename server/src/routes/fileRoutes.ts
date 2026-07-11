@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   uploadFile,
   getFiles,
+  downloadFile,
   deleteFile,
 } from "../controllers/fileController";
 
@@ -24,6 +25,13 @@ router.get(
   "/:serverId",
   authMiddleware,
   getFiles
+);
+
+// ================= DOWNLOAD FILE =================
+router.get(
+  "/:fileId/download",
+  authMiddleware,
+  downloadFile
 );
 
 // ================= DELETE FILE =================

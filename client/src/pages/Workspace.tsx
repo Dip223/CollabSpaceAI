@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { FileText, Image as ImageIcon, File as FileIcon, Trash2, Download, Upload } from "lucide-react";
+import { FileText, Image as ImageIcon, File as FileIcon, Trash2, Download, Upload, Users, MessageSquare, FolderOpen, Copy, Check, Send } from "lucide-react";
 
 import {
   getWorkspace,
@@ -15,6 +15,7 @@ import {
 import {
   getFiles,
   uploadFile as uploadFileApi,
+  downloadFile as downloadFileApi,
   deleteFile as deleteFileApi,
 } from "../services/fileApi";
 
@@ -73,14 +74,33 @@ const formatSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const AVATAR_COLORS = [
+  "bg-indigo-500",
+  "bg-cyan-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-pink-500",
+  "bg-violet-500",
+];
+
+const initials = (name?: string) =>
+  (name || "?")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("");
+
+const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
+
 const FileTypeIcon = ({ mimeType }: { mimeType: string }) => {
   if (mimeType.startsWith("image/")) {
-    return <ImageIcon size={20} className="text-cyan-400 shrink-0" />;
+    return <ImageIcon size={18} className="text-cyan-400 shrink-0" />;
   }
   if (mimeType === "application/pdf") {
-    return <FileText size={20} className="text-red-400 shrink-0" />;
+    return <FileText size={18} className="text-red-400 shrink-0" />;
   }
-  return <FileIcon size={20} className="text-indigo-400 shrink-0" />;
+  return <FileIcon size={18} className="text-indigo-400 shrink-0" />;
 };
 
 export default function Workspace() {
@@ -91,16 +111,22 @@ export default function Workspace() {
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [message, setMessage] = useState("");
-  const [typing, setTyping] = useState("");
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [connectError, setConnectError] = useState("");
 
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [uploading, setUploading] = useState(false);
 
   const [onlineUsers, setOnlineUsers] = useState<PresenceEntry[]>([]);
   const [activity, setActivity] = useState<string[]>([]);
+  const [copiedInvite, setCopiedInvite] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
 
   const pushActivity = (text: string) => {
     setActivity((prev) => [text, ...prev].slice(0, 6));
@@ -111,20 +137,56 @@ export default function Workspace() {
 
     const user = currentUser();
 
+    // Re-joins on first connect AND on every automatic reconnection
+    // (network blip, backend restart, etc.) — without this, a dropped
+    // connection would silently stop showing you as online/typing to
+    // everyone else until a manual page refresh.
+    const handleConnect = () => {
+      setConnected(true);
+      setConnectError("");
+      socket.emit("join-workspace", {
+        workspaceId,
+        name: user.name,
+      });
+    };
+
+    const handleDisconnect = () => {
+      setConnected(false);
+    };
+
+    const handleConnectError = (err: Error) => {
+      setConnected(false);
+      setConnectError(err.message || "Connection failed");
+      console.error("Socket connect_error:", err.message);
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
+    socket.on("connect_error", handleConnectError);
+
     socket.connect();
 
-    socket.emit("join-workspace", {
-      workspaceId,
-      name: user.name,
-    });
-
     socket.on("receive-message", (data: Message) => {
-      setMessages((prev) => [...prev, data]);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === data.id)) return prev;
+        return [...prev, data];
+      });
     });
 
     socket.on("typing", (data: { user: string }) => {
-      setTyping(`${data.user} is typing...`);
-      setTimeout(() => setTyping(""), 1000);
+      const existing = typingTimeouts.current.get(data.user);
+      if (existing) clearTimeout(existing);
+
+      setTypingUsers((prev) =>
+        prev.includes(data.user) ? prev : [...prev, data.user]
+      );
+
+      const timeout = setTimeout(() => {
+        setTypingUsers((prev) => prev.filter((n) => n !== data.user));
+        typingTimeouts.current.delete(data.user);
+      }, 2000);
+
+      typingTimeouts.current.set(data.user, timeout);
     });
 
     socket.on("presence-update", (users: PresenceEntry[]) => {
@@ -152,11 +214,17 @@ export default function Workspace() {
     return () => {
       socket.emit("leave-workspace", workspaceId);
 
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
+      socket.off("connect_error", handleConnectError);
       socket.off("receive-message");
       socket.off("typing");
       socket.off("presence-update");
       socket.off("file-uploaded");
       socket.off("file-deleted");
+
+      typingTimeouts.current.forEach((t) => clearTimeout(t));
+      typingTimeouts.current.clear();
 
       socket.disconnect();
     };
@@ -189,6 +257,10 @@ export default function Workspace() {
 
     try {
       const saved = await saveMessage(workspaceId, message);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === saved.id)) return prev;
+        return [...prev, saved];
+      });
       socket.emit("send-message", saved);
       setMessage("");
     } catch (err) {
@@ -235,113 +307,266 @@ export default function Workspace() {
 
     try {
       await deleteFileApi(file.id);
-      // Removed from the list via the "file-deleted" socket event.
+      // Remove immediately rather than waiting on the "file-deleted"
+      // socket event, which only reliably reaches other members.
+      setFiles((prev) => prev.filter((f) => f.id !== file.id));
     } catch (err: any) {
       alert(err.response?.data?.message || "Delete failed");
+    }
+  };
+
+  const handleDownload = async (file: SharedFile) => {
+    try {
+      const res = await downloadFileApi(file.id);
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      // With responseType: "blob", axios can't auto-parse a JSON error
+      // body — it arrives as a Blob, so the real backend message was
+      // being silently swallowed. Unwrap it here so we see what actually
+      // failed instead of a generic message.
+      let reason = "Download failed";
+
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          reason = parsed.message || reason;
+        } catch {
+          // body wasn't JSON, fall back to the generic message
+        }
+      }
+
+      console.error("Download error:", reason, err);
+      alert(reason);
     }
   };
 
   const onlineUserIds = new Set(onlineUsers.map((u) => u.userId));
   const me = currentUser();
 
+  const handleCopyInvite = () => {
+    if (!workspace) return;
+    navigator.clipboard.writeText(workspace.inviteCode);
+    setCopiedInvite(true);
+    setTimeout(() => setCopiedInvite(false), 1500);
+  };
+
   return (
-    <div className="min-h-screen bg-[#313338] p-8">
-      <h1 className="text-4xl font-bold text-white">{workspace?.name}</h1>
+    <div className="min-h-screen bg-[#1e1f22]">
+      {/* Header */}
+      <div className="border-b border-white/5 bg-gradient-to-r from-[#2b2d31] via-[#26282c] to-[#1e1f22] px-8 py-6">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-white tracking-tight">
+              {workspace?.name || "Loading..."}
+            </h1>
 
-      <p className="text-gray-400 mt-2">
-        Invite Code :
-        <span className="text-indigo-400 ml-2 font-semibold">
-          {workspace?.inviteCode}
-        </span>
-      </p>
-
-      {activity.length > 0 && (
-        <div className="mt-4 flex flex-col gap-1">
-          {activity.map((text, i) => (
-            <p
-              key={i}
-              className="text-sm text-gray-400 bg-[#2b2d31] w-fit px-3 py-1 rounded-md"
+            <button
+              onClick={handleCopyInvite}
+              className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-300 group"
             >
-              {text}
-            </p>
-          ))}
-        </div>
-      )}
+              <span>Invite code:</span>
+              <span className="font-mono font-semibold text-indigo-400 group-hover:text-indigo-300">
+                {workspace?.inviteCode}
+              </span>
+              {copiedInvite ? (
+                <Check size={13} className="text-emerald-400" />
+              ) : (
+                <Copy size={13} className="opacity-60" />
+              )}
+            </button>
+          </div>
 
-      <div className="grid grid-cols-4 gap-6 mt-6">
-        {/* Members */}
-        <div className="bg-[#2b2d31] rounded-xl p-5">
-          <h2 className="text-white text-xl font-bold mb-5">
-            Members
-            <span className="ml-2 text-sm font-normal text-green-400">
-              {onlineUsers.length > 0 && `${onlineUsers.length} online`}
+          <div
+            className={`flex items-center gap-2 rounded-full px-3.5 py-1.5 ${
+              connected ? "bg-white/5" : "bg-amber-500/10"
+            }`}
+          >
+            <span className="relative flex h-2 w-2">
+              {connected && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              )}
+              <span
+                className={`relative inline-flex rounded-full h-2 w-2 ${
+                  connected ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
+                }`}
+              />
             </span>
-          </h2>
+            <span
+              className={`text-sm ${
+                connected ? "text-gray-300" : "text-amber-400"
+              }`}
+              title={connectError || undefined}
+            >
+              {connected
+                ? `${onlineUsers.length} online`
+                : connectError
+                ? `Connection failed: ${connectError}`
+                : "Connecting..."}
+            </span>
+          </div>
+        </div>
 
-          <div className="space-y-3">
-            {members.map((member) => (
-              <div
-                key={member.id}
-                className="bg-[#1e1f22] rounded-lg p-3 flex items-center gap-2"
+        {/* Live activity feed */}
+        {activity.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {activity.map((text, i) => (
+              <span
+                key={i}
+                className="text-xs text-gray-300 bg-white/5 border border-white/10 px-3 py-1 rounded-full animate-in fade-in slide-in-from-left-1"
               >
-                <span
-                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                    onlineUserIds.has(member.id)
-                      ? "bg-green-500"
-                      : "bg-gray-600"
-                  }`}
-                  title={onlineUserIds.has(member.id) ? "Online" : "Offline"}
-                />
-
-                <div>
-                  <p className="text-white font-semibold">{member.name}</p>
-                  <p className="text-gray-400 text-sm">{member.email}</p>
-                </div>
-              </div>
+                {text}
+              </span>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 p-6">
+        {/* Members */}
+        <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-4 border-b border-white/5">
+            <Users size={16} className="text-indigo-400" />
+            <h2 className="text-white font-semibold">Members</h2>
+            <span className="text-xs text-gray-500 ml-auto">
+              {members.length}
+            </span>
+          </div>
+
+          <div className="p-3 space-y-1.5 overflow-y-auto" style={{ maxHeight: "560px" }}>
+            {members.map((member) => {
+              const online = onlineUserIds.has(member.id);
+              return (
+                <div
+                  key={member.id}
+                  className="rounded-xl p-2.5 flex items-center gap-3 hover:bg-white/5 transition-colors"
+                >
+                  <div className="relative shrink-0">
+                    <div
+                      className={`h-9 w-9 rounded-full ${avatarColor(
+                        member.id
+                      )} flex items-center justify-center text-white text-xs font-bold`}
+                    >
+                      {initials(member.name)}
+                    </div>
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
+                        online ? "bg-emerald-500" : "bg-gray-600"
+                      }`}
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-white text-sm font-medium truncate">
+                      {member.name}
+                    </p>
+                    <p className="text-gray-500 text-xs truncate">
+                      {online ? "Online" : "Offline"}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* Chat */}
-        <div className="col-span-2 bg-[#2b2d31] rounded-xl p-5 flex flex-col">
-          <h2 className="text-white text-xl font-bold">Workspace Chat</h2>
+        <div className="lg:col-span-2 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-4 border-b border-white/5">
+            <MessageSquare size={16} className="text-indigo-400" />
+            <h2 className="text-white font-semibold">Workspace Chat</h2>
+          </div>
 
           <div
-            className="flex-1 mt-5 bg-[#1e1f22] rounded-lg p-4 overflow-y-auto space-y-3"
+            className="flex-1 px-4 py-4 overflow-y-auto space-y-4"
             style={{ height: "500px" }}
           >
             {messages.length === 0 ? (
-              <p className="text-center text-gray-500 mt-10">
-                No messages yet...
-              </p>
+              <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
+                <MessageSquare size={28} className="opacity-30" />
+                <p className="text-sm">
+                  No messages yet — say hi to get things started
+                </p>
+              </div>
             ) : (
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`rounded-lg p-3 max-w-[80%] ${
-                    msg.sender.name === me.name
-                      ? "bg-indigo-600 ml-auto"
-                      : "bg-[#2b2d31]"
-                  }`}
-                >
-                  <p className="font-semibold text-white">
-                    {msg.sender.name}
-                  </p>
-                  <p className="text-white mt-1">{msg.content}</p>
-                  <p className="text-xs text-gray-300 mt-2">
-                    {new Date(msg.createdAt).toLocaleTimeString()}
-                  </p>
-                </div>
-              ))
+              messages.map((msg) => {
+                const isMe = msg.sender.name === me.name;
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex gap-2.5 max-w-[85%] ${
+                      isMe ? "ml-auto flex-row-reverse" : ""
+                    }`}
+                  >
+                    <div
+                      className={`h-8 w-8 rounded-full ${avatarColor(
+                        msg.sender.id
+                      )} flex items-center justify-center text-white text-[10px] font-bold shrink-0 mt-1`}
+                    >
+                      {initials(msg.sender.name)}
+                    </div>
+
+                    <div
+                      className={`rounded-2xl px-4 py-2.5 ${
+                        isMe
+                          ? "bg-indigo-600 rounded-tr-sm"
+                          : "bg-[#1e1f22] rounded-tl-sm"
+                      }`}
+                    >
+                      {!isMe && (
+                        <p className="text-xs font-semibold text-indigo-400 mb-0.5">
+                          {msg.sender.name}
+                        </p>
+                      )}
+                      <p className="text-white text-sm leading-relaxed">
+                        {msg.content}
+                      </p>
+                      <p
+                        className={`text-[10px] mt-1 ${
+                          isMe ? "text-indigo-200/70" : "text-gray-500"
+                        }`}
+                      >
+                        {new Date(msg.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
             )}
             <div ref={bottomRef}></div>
           </div>
 
-          <p className="text-gray-400 h-6 mt-2">{typing}</p>
+          <div className="px-4 h-6 -mt-1 flex items-center">
+            {typingUsers.length > 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-500 italic">
+                <span className="flex gap-0.5">
+                  <span className="h-1 w-1 rounded-full bg-gray-500 animate-bounce [animation-delay:-0.3s]" />
+                  <span className="h-1 w-1 rounded-full bg-gray-500 animate-bounce [animation-delay:-0.15s]" />
+                  <span className="h-1 w-1 rounded-full bg-gray-500 animate-bounce" />
+                </span>
+                {typingUsers.length === 1
+                  ? `${typingUsers[0]} is typing...`
+                  : typingUsers.length === 2
+                  ? `${typingUsers[0]} and ${typingUsers[1]} are typing...`
+                  : `${typingUsers.length} people are typing...`}
+              </div>
+            )}
+          </div>
 
-          <div className="flex gap-3 mt-2">
+          <div className="flex gap-2 p-4 pt-2 border-t border-white/5">
             <input
-              className="flex-1 rounded-lg bg-[#1e1f22] text-white p-3 outline-none"
+              className="flex-1 rounded-xl bg-[#1e1f22] text-white text-sm px-4 py-2.5 outline-none ring-1 ring-transparent focus:ring-indigo-500 transition-shadow placeholder:text-gray-500"
               placeholder="Type a message..."
               value={message}
               onChange={handleTyping}
@@ -352,24 +577,29 @@ export default function Workspace() {
 
             <button
               onClick={sendMessage}
-              className="bg-indigo-600 hover:bg-indigo-700 px-6 rounded-lg text-white"
+              disabled={!message.trim()}
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 transition-colors px-4 rounded-xl text-white text-sm font-medium"
             >
+              <Send size={14} />
               Send
             </button>
           </div>
         </div>
 
         {/* Files */}
-        <div className="bg-[#2b2d31] rounded-xl p-5 flex flex-col">
-          <div className="flex items-center justify-between">
-            <h2 className="text-white text-xl font-bold">Shared Files</h2>
+        <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+            <div className="flex items-center gap-2">
+              <FolderOpen size={16} className="text-indigo-400" />
+              <h2 className="text-white font-semibold">Shared Files</h2>
+            </div>
 
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-lg"
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors text-white text-xs font-medium px-3 py-1.5 rounded-lg"
             >
-              <Upload size={14} />
+              <Upload size={13} />
               {uploading ? "Uploading..." : "Upload"}
             </button>
 
@@ -383,54 +613,61 @@ export default function Workspace() {
           </div>
 
           <div
-            className="mt-5 bg-[#1e1f22] rounded-lg overflow-y-auto space-y-2 p-3"
+            className="p-3 overflow-y-auto space-y-2"
             style={{ height: "500px" }}
           >
             {files.length === 0 ? (
-              <p className="text-center text-gray-500 mt-10">
-                No files shared yet
-              </p>
+              <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
+                <FolderOpen size={28} className="opacity-30" />
+                <p className="text-sm">No files shared yet</p>
+              </div>
             ) : (
               files.map((file) => (
                 <div
                   key={file.id}
-                  className="bg-[#2b2d31] rounded-lg p-3 flex items-start gap-2"
+                  className="bg-[#1e1f22] rounded-xl p-3 flex items-start gap-3 hover:bg-[#232428] transition-colors group"
                 >
-                  <FileTypeIcon mimeType={file.mimeType} />
+                  <div className="h-9 w-9 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                    <FileTypeIcon mimeType={file.mimeType} />
+                  </div>
 
                   <div className="min-w-0 flex-1">
                     <p className="text-white text-sm font-medium truncate">
                       {file.name}
                     </p>
-                    <p className="text-gray-400 text-xs mt-0.5">
+                    <p className="text-gray-500 text-xs mt-0.5">
                       {formatSize(file.size)} · {file.uploader.name}
                     </p>
-                    <p className="text-gray-500 text-xs mt-0.5">
-                      {new Date(file.createdAt).toLocaleString()}
+                    <p className="text-gray-600 text-[11px] mt-0.5">
+                      {new Date(file.createdAt).toLocaleString([], {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </p>
                   </div>
 
-                  <a
-                    href={file.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    download={file.name}
-                    className="text-gray-400 hover:text-indigo-400 shrink-0"
-                    title="Download"
-                  >
-                    <Download size={16} />
-                  </a>
-
-                  {(file.uploader.id === me.id ||
-                    workspace?.ownerId === me.id) && (
+                  <div className="flex flex-col gap-2 opacity-60 group-hover:opacity-100 transition-opacity shrink-0">
                     <button
-                      onClick={() => handleDeleteFile(file)}
-                      className="text-gray-400 hover:text-red-400 shrink-0"
-                      title="Delete"
+                      onClick={() => handleDownload(file)}
+                      className="text-gray-400 hover:text-indigo-400"
+                      title="Download"
                     >
-                      <Trash2 size={16} />
+                      <Download size={15} />
                     </button>
-                  )}
+
+                    {(file.uploader.id === me.id ||
+                      workspace?.ownerId === me.id) && (
+                      <button
+                        onClick={() => handleDeleteFile(file)}
+                        className="text-gray-400 hover:text-red-400"
+                        title="Delete"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))
             )}

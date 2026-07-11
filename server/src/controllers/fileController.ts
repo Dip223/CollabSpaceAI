@@ -12,6 +12,7 @@ const uploadBuffer = (
     const stream = cloudinary.uploader.upload_stream(
       {
         resource_type: "auto",
+        type: "authenticated", // not publicly readable via the raw URL
         folder: "collabspace",
         use_filename: true,
         unique_filename: true,
@@ -135,7 +136,99 @@ export const getFiles = async (
   }
 };
 
-// ================= DELETE FILE =================
+// ================= DOWNLOAD FILE =================
+// Files are stored as Cloudinary "authenticated" type (private), so
+// direct URLs 401 for anyone, including logged-in users. This route
+// checks workspace membership, then fetches the file server-side using
+// a short-lived signed URL and streams it back — the raw Cloudinary URL
+// is never exposed to the browser.
+
+export const downloadFile = async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const fileId = Number(req.params.fileId);
+
+    const file = await prisma.file.findUnique({
+      where: { id: fileId },
+    });
+
+    if (!file) {
+      return res.status(404).json({
+        message: "File not found",
+      });
+    }
+
+    const member = await prisma.membership.findUnique({
+      where: {
+        userId_serverId: {
+          userId: req.userId!,
+          serverId: file.serverId,
+        },
+      },
+    });
+
+    if (!member) {
+      return res.status(403).json({
+        message: "Access denied",
+      });
+    }
+
+    const signedUrl = cloudinary.url(file.publicId, {
+      resource_type: file.resourceType || "image",
+      type: "authenticated",
+      sign_url: true,
+      secure: true,
+    });
+
+    let cloudRes = await fetch(signedUrl);
+    let usedFallback = false;
+
+    // Fallback for files uploaded before "authenticated" delivery was
+    // turned on — they were stored as plain public "upload" type.
+    if (!cloudRes.ok && file.url) {
+      usedFallback = true;
+      cloudRes = await fetch(file.url);
+    }
+
+    if (!cloudRes.ok) {
+      console.log(
+        `Download failed for file ${fileId} (${file.name}): ` +
+          `authenticated fetch ${usedFallback ? "and " : ""}` +
+          `fallback fetch both failed, last status ${cloudRes.status}`
+      );
+
+      return res.status(502).json({
+        message: usedFallback
+          ? "This file was uploaded before private delivery was enabled, " +
+            "and Cloudinary is blocking its public PDF/ZIP link. Re-upload " +
+            "the file to fix this permanently, or enable 'Allow delivery " +
+            "of PDF and ZIP files' in Cloudinary Console → Settings → Security."
+          : "Could not retrieve file from storage",
+      });
+    }
+
+    const buffer = Buffer.from(await cloudRes.arrayBuffer());
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.name.replace(/"/g, "")}"`
+    );
+    res.setHeader(
+      "Content-Type",
+      file.mimeType || "application/octet-stream"
+    );
+
+    return res.send(buffer);
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
 
 export const deleteFile = async (
   req: AuthRequest,
@@ -170,6 +263,7 @@ export const deleteFile = async (
     if (file.publicId) {
       await cloudinary.uploader.destroy(file.publicId, {
         resource_type: file.resourceType || "image",
+        type: "authenticated",
       });
     }
 
