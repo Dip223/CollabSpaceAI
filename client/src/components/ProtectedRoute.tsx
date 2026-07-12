@@ -1,7 +1,8 @@
+import type { ReactElement } from "react";
 import { Navigate } from "react-router-dom";
 
 interface Props {
-  children: JSX.Element;
+  children: ReactElement;
 }
 
 export default function ProtectedRoute({
