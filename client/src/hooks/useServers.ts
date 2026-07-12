@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getMyServers } from "../services/serverService";
-import { Server } from "../types/server";
+import type { Server } from "../types/server";
 
 export default function useServers() {
   const [servers, setServers] = useState<Server[]>([]);

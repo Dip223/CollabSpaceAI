@@ -16,7 +16,7 @@ export const sendVerificationEmail = async (
 ) => {
 
   const verificationLink =
-    `http://localhost:5000/api/auth/verify/${token}`;
+    `${process.env.SERVER_URL || "http://localhost:5000"}/api/auth/verify/${token}`;
 
   await transporter.sendMail({
 
@@ -39,7 +39,7 @@ export const sendVerificationEmail = async (
           Please click the button below to verify your email.
         </p>
 
-        <a
+        
           href="${verificationLink}"
           style="
             display:inline-block;
@@ -97,7 +97,7 @@ export const sendResetPasswordEmail = async (
           Click the button below to create a new password.
         </p>
 
-        <a
+        
           href="${resetLink}"
           style="
             display:inline-block;
