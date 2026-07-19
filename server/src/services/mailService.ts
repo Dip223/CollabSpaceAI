@@ -1,58 +1,65 @@
-import dns from "node:dns";
-import nodemailer from "nodemailer";
+const brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
 
-const smtpHostname = process.env.SMTP_HOST || "smtp.gmail.com";
+type EmailPayload = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+};
 
-const getTransporter = async () => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+const sendEmail = async ({
+  to,
+  subject,
+  text,
+  html,
+}: EmailPayload) => {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderName =
+    process.env.BREVO_SENDER_NAME || "CollabSpace AI";
+
+  if (!apiKey || !senderEmail) {
     throw new Error(
-      "Email service is not configured. Set EMAIL_USER and EMAIL_PASS."
+      "Brevo email service is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL."
     );
   }
 
-  const ipv4Addresses = await dns.promises.resolve4(smtpHostname);
-
-  if (!ipv4Addresses.length) {
-    throw new Error("Could not resolve an IPv4 address for the SMTP server.");
-  }
-
-  return nodemailer.createTransport({
-    host: ipv4Addresses[0],
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: false,
-    requireTLS: true,
-
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+  const response = await fetch(brevoApiUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "api-key": apiKey,
+      "content-type": "application/json",
     },
-
-    tls: {
-      servername: smtpHostname,
-      minVersion: "TLSv1.2",
-    },
-
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
+    body: JSON.stringify({
+      sender: {
+        name: senderName,
+        email: senderEmail,
+      },
+      to: [{ email: to }],
+      subject,
+      textContent: text,
+      htmlContent: html,
+    }),
   });
-};
 
-const sender = () =>
-  process.env.EMAIL_FROM ||
-  `"CollabSpace AI" <${process.env.EMAIL_USER}>`;
+  if (!response.ok) {
+    const errorText = await response.text();
+
+    throw new Error(
+      `Brevo email delivery failed (${response.status}): ${errorText}`
+    );
+  }
+};
 
 export const sendVerificationEmail = async (
   email: string,
   otp: string
 ) => {
-  const transporter = await getTransporter();
-
-  await transporter.sendMail({
-    from: sender(),
+  await sendEmail({
     to: email,
     subject: "Your CollabSpace AI verification code",
-    text: `Your CollabSpace AI verification code is ${otp}. It expires in 10 minutes.`,
+    text: `Your CollabSpace AI verification code is ${otp}. It expires in 10 minutes. Do not share this code with anyone.`,
     html: `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
         <h2>Verify your CollabSpace AI account</h2>
@@ -70,12 +77,10 @@ export const sendResetPasswordEmail = async (
   email: string,
   token: string
 ) => {
-  const transporter = await getTransporter();
   const resetLink =
     `${process.env.CLIENT_URL}/reset-password/${token}`;
 
-  await transporter.sendMail({
-    from: sender(),
+  await sendEmail({
     to: email,
     subject: "Reset your CollabSpace AI password",
     text: `Reset your password: ${resetLink}`,
