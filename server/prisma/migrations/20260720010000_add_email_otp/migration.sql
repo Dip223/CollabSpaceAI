@@ -1,0 +1,4 @@
+ALTER TABLE "User"
+  ADD COLUMN "emailOtp" TEXT,
+  ADD COLUMN "emailOtpExpiresAt" TIMESTAMP(3),
+  ADD COLUMN "emailOtpAttempts" INTEGER NOT NULL DEFAULT 0;

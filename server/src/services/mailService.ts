@@ -3,135 +3,80 @@ import nodemailer from "nodemailer";
 const getTransporter = () => {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     throw new Error(
-      "Email service is not configured. Set EMAIL_USER and EMAIL_PASS on the server."
+      "Email service is not configured. Set EMAIL_USER and EMAIL_PASS."
     );
   }
 
   return nodemailer.createTransport({
-    service: "gmail",
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    requireTLS: true,
+
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+
+    tls: {
+      servername: process.env.SMTP_HOST || "smtp.gmail.com",
+      minVersion: "TLSv1.2",
+    },
+
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   });
 };
 
-// ================= VERIFY EMAIL =================
+const sender = () =>
+  process.env.EMAIL_FROM ||
+  `"CollabSpace AI" <${process.env.EMAIL_USER}>`;
 
 export const sendVerificationEmail = async (
   email: string,
-  token: string
+  otp: string
 ) => {
-
-  const verificationLink =
-    `${process.env.SERVER_URL || "http://localhost:5000"}/api/auth/verify/${token}`;
-
   await getTransporter().sendMail({
-
-    from: `"CollabSpace AI" <${process.env.EMAIL_USER}>`,
-
+    from: sender(),
     to: email,
-
-    subject: "Verify Your CollabSpace Account",
-
+    subject: "Your CollabSpace AI verification code",
+    text: `Your CollabSpace AI verification code is ${otp}. It expires in 10 minutes. Do not share this code with anyone.`,
     html: `
-      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;">
-
-        <h2>Welcome to CollabSpace AI 🎉</h2>
-
-        <p>
-          Thank you for creating an account.
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
+        <h2>Verify your CollabSpace AI account</h2>
+        <p>Enter this code in the verification page:</p>
+        <p style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#5865F2">
+          ${otp}
         </p>
-
-        <p>
-          Please click the button below to verify your email.
-        </p>
-
-        <a
-          href="${verificationLink}"
-          style="
-            display:inline-block;
-            padding:12px 20px;
-            background:#5865F2;
-            color:#ffffff;
-            text-decoration:none;
-            border-radius:8px;
-            font-weight:bold;
-          "
-        >
-          Verify Email
-        </a>
-
-        <p style="margin-top:20px;">
-          This verification link expires in
-          <strong>24 hours</strong>.
-        </p>
-
+        <p>This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>
       </div>
     `,
-
   });
-
 };
-
-// ================= RESET PASSWORD =================
 
 export const sendResetPasswordEmail = async (
   email: string,
   token: string
 ) => {
-
   const resetLink =
     `${process.env.CLIENT_URL}/reset-password/${token}`;
 
   await getTransporter().sendMail({
-
-    from: `"CollabSpace AI" <${process.env.EMAIL_USER}>`,
-
+    from: sender(),
     to: email,
-
-    subject: "Reset Your CollabSpace Password",
-
+    subject: "Reset your CollabSpace AI password",
+    text: `Reset your password: ${resetLink}`,
     html: `
-      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;">
-
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
         <h2>Reset Password</h2>
-
-        <p>
-          We received a request to reset your password.
-        </p>
-
-        <p>
-          Click the button below to create a new password.
-        </p>
-
-        <a
-          href="${resetLink}"
-          style="
-            display:inline-block;
-            padding:12px 20px;
-            background:#5865F2;
-            color:#ffffff;
-            text-decoration:none;
-            border-radius:8px;
-            font-weight:bold;
-          "
-        >
+        <p>Click below to create a new password:</p>
+        <a href="${resetLink}"
+          style="display:inline-block;padding:12px 20px;background:#5865F2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">
           Reset Password
         </a>
-
-        <p style="margin-top:20px;">
-          This link will expire in
-          <strong>1 hour</strong>.
-        </p>
-
-        <p>
-          If you didn't request this, you can safely ignore this email.
-        </p>
-
+        <p>This link expires in 1 hour.</p>
       </div>
     `,
-
   });
-
 };
