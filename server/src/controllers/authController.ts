@@ -16,12 +16,18 @@ export const register = async (
   res: Response
 ) => {
   try {
-    const name = String(req.body.name);
-    const email = String(req.body.email);
+    const name = String(req.body.name || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password);
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
+    if (!name || !email || !password || password.length < 6) {
+      return res.status(400).json({
+        message: "Name, an email, and a password of at least 6 characters are required.",
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
     });
 
     if (existingUser) {
@@ -31,41 +37,45 @@ export const register = async (
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const requiresEmailVerification =
+      process.env.REQUIRE_EMAIL_VERIFICATION !== "false";
 
     const user = await prisma.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
+        isVerified: !requiresEmailVerification,
       },
     });
 
-    const verifyToken = jwt.sign(
-      { id: user.id },
-      process.env.JWT_SECRET as string,
-      {
-        expiresIn: "1d",
-      }
-    );
+    if (requiresEmailVerification) {
+      const verifyToken = jwt.sign(
+        { id: user.id },
+        process.env.JWT_SECRET as string,
+        {
+          expiresIn: "1d",
+        }
+      );
 
-    await prisma.user.update({
-      where: {
-        id: user.id,
-      },
-      data: {
-        verifyToken,
-      },
-    });
+      await prisma.user.update({
+        where: {
+          id: user.id,
+        },
+        data: {
+          verifyToken,
+        },
+      });
 
-    await sendVerificationEmail(
-      user.email,
-      verifyToken
-    );
+      await sendVerificationEmail(user.email, verifyToken);
+    }
 
     const { password: _, ...safeUser } = user;
 
     return res.status(201).json({
-      message: "User registered. Verification email sent.",
+      message: requiresEmailVerification
+        ? "User registered. Verification email sent."
+        : "User registered. Email verification is disabled for local development.",
       user: safeUser,
     });
   } catch (error) {
@@ -84,12 +94,12 @@ export const login = async (
   res: Response
 ) => {
   try {
-    const email = String(req.body.email);
+    const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password);
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: {
-        email,
+        email: { equals: email, mode: "insensitive" },
       },
     });
 
@@ -155,9 +165,22 @@ export const verifyEmail = async (
   try {
     const token = String(req.params.token);
 
+    let tokenPayload: { id: number };
+    try {
+      tokenPayload = jwt.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as { id: number };
+    } catch {
+      return res.status(400).json({
+        message: "Verification link is invalid or has expired. Request a new one from the login page.",
+      });
+    }
+
     const user = await prisma.user.findFirst({
       where: {
         verifyToken: token,
+        id: tokenPayload.id,
       },
     });
 
@@ -196,11 +219,11 @@ export const resendVerification = async (
   res: Response
 ) => {
   try {
-    const email = String(req.body.email);
+    const email = String(req.body.email || "").trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: {
-        email,
+        email: { equals: email, mode: "insensitive" },
       },
     });
 
@@ -259,11 +282,11 @@ export const forgotPassword = async (
   res: Response
 ) => {
   try {
-    const email = String(req.body.email);
+    const email = String(req.body.email || "").trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: {
-        email,
+        email: { equals: email, mode: "insensitive" },
       },
     });
 

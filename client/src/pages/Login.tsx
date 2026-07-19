@@ -1,151 +1,139 @@
-import { Link, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Mail, Lock } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { useState } from "react";
-import api from "../services/api";
+import { Server as SocketIOServer, Socket } from "socket.io";
+import http from "http";
+import jwt from "jsonwebtoken";
 
-export default function Login() {
-  const navigate = useNavigate();
-
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleLogin = async () => {
-    try {
-      setLoading(true);
-
-      const res = await api.post("/auth/login", {
-        email,
-        password,
-      });
-
-      // Save JWT Token
-      localStorage.setItem("token", res.data.token);
-
-      // Save entire user object (used for chat)
-      localStorage.setItem(
-        "user",
-        JSON.stringify(res.data.user)
-      );
-
-      // Save individual fields (optional)
-      localStorage.setItem(
-        "username",
-        res.data.user.name
-      );
-
-      localStorage.setItem(
-        "email",
-        res.data.user.email
-      );
-
-      localStorage.setItem(
-        "userId",
-        String(res.data.user.id)
-      );
-
-      navigate("/dashboard");
-    } catch (err: any) {
-      alert(
-        err.response?.data?.message ||
-          "Login failed"
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center relative overflow-hidden">
-      <div className="absolute w-96 h-96 bg-indigo-600 rounded-full blur-[140px] opacity-30 -top-32 -left-32" />
-
-      <div className="absolute w-96 h-96 bg-cyan-500 rounded-full blur-[150px] opacity-20 bottom-0 right-0" />
-
-      <motion.div
-        initial={{ opacity: 0, y: 40 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <Card className="w-[430px] bg-[#2b2d31] border-[#3f4147] shadow-2xl">
-          <CardContent className="p-8">
-            <h1 className="text-3xl text-white font-bold">
-              Welcome Back
-            </h1>
-
-            <p className="text-gray-400 mt-2">
-              Sign in to CollabSpace AI
-            </p>
-
-            <div className="mt-8 space-y-5">
-              <div className="relative">
-                <Mail
-                  className="absolute left-3 top-3 text-gray-400"
-                  size={18}
-                />
-
-                <Input
-                  className="pl-10 bg-[#1e1f22] border-[#404249] text-white"
-                  placeholder="Email"
-                  value={email}
-                  onChange={(e) =>
-                    setEmail(e.target.value)
-                  }
-                />
-              </div>
-
-              <div className="relative">
-                <Lock
-                  className="absolute left-3 top-3 text-gray-400"
-                  size={18}
-                />
-
-                <Input
-                  type="password"
-                  className="pl-10 bg-[#1e1f22] border-[#404249] text-white"
-                  placeholder="Password"
-                  value={password}
-                  onChange={(e) =>
-                    setPassword(e.target.value)
-                  }
-                />
-              </div>
-
-              <div className="flex justify-center mt-2">
-                <Link
-                  to="/forgot-password"
-                  className="text-sm text-indigo-400 hover:text-indigo-300 transition"
-                >
-                  Forgot Password?
-                </Link>
-              </div>
-
-              <Button
-                className="w-full bg-indigo-600 hover:bg-indigo-700"
-                onClick={handleLogin}
-                disabled={loading}
-              >
-                {loading
-                  ? "Signing In..."
-                  : "Login"}
-              </Button>
-            </div>
-
-            <p className="text-gray-400 text-center mt-8">
-              Don't have an account?
-
-              <Link
-                to="/register"
-                className="text-indigo-400 ml-2"
-              >
-                Register
-              </Link>
-            </p>
-          </CardContent>
-        </Card>
-      </motion.div>
-    </div>
-  );
+interface AuthedSocket extends Socket {
+  userId?: number;
 }
+
+interface PresenceEntry {
+  userId: number;
+  name: string;
+}
+
+let io: SocketIOServer;
+
+// workspaceId -> Map<socketId, PresenceEntry>
+const presence = new Map<number, Map<string, PresenceEntry>>();
+
+const roomName = (workspaceId: number) => `workspace-${workspaceId}`;
+
+const broadcastPresence = (workspaceId: number) => {
+  const roomPresence = presence.get(workspaceId);
+  if (!roomPresence) return;
+
+  // De-dupe by userId (same user could have multiple tabs/sockets open)
+  const uniqueUsers = new Map<number, PresenceEntry>();
+  roomPresence.forEach((entry) => uniqueUsers.set(entry.userId, entry));
+
+  io.to(roomName(workspaceId)).emit(
+    "presence-update",
+    Array.from(uniqueUsers.values())
+  );
+};
+
+const leaveWorkspace = (socket: AuthedSocket, workspaceId: number) => {
+  socket.leave(roomName(workspaceId));
+
+  const roomPresence = presence.get(workspaceId);
+  if (!roomPresence) return;
+
+  roomPresence.delete(socket.id);
+
+  if (roomPresence.size === 0) {
+    presence.delete(workspaceId);
+  } else {
+    broadcastPresence(workspaceId);
+  }
+};
+
+export const initSocket = (server: http.Server) => {
+  const allowedOrigins = (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+
+  io = new SocketIOServer(server, {
+    cors: {
+      origin: allowedOrigins,
+      credentials: true,
+    },
+  });
+
+  // ================= AUTH =================
+  // Every socket connection must carry the same JWT used for REST calls.
+  io.use((socket: AuthedSocket, next) => {
+    try {
+      const token = socket.handshake.auth?.token as string | undefined;
+
+      if (!token) {
+        return next(new Error("No token provided"));
+      }
+
+      const decoded = jwt.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as { id: number };
+
+      socket.userId = decoded.id;
+      next();
+    } catch {
+      next(new Error("Invalid or expired token"));
+    }
+  });
+
+  io.on("connection", (socket: AuthedSocket) => {
+    // ================= JOIN / LEAVE =================
+
+    socket.on(
+      "join-workspace",
+      (payload: { workspaceId: number; name: string }) => {
+        const { workspaceId, name } = payload;
+
+        socket.join(roomName(workspaceId));
+
+        if (!presence.has(workspaceId)) {
+          presence.set(workspaceId, new Map());
+        }
+
+        presence.get(workspaceId)!.set(socket.id, {
+          userId: socket.userId!,
+          name,
+        });
+
+        broadcastPresence(workspaceId);
+      }
+    );
+
+    socket.on("leave-workspace", (workspaceId: number) => {
+      leaveWorkspace(socket, workspaceId);
+    });
+
+    // ================= CHAT =================
+
+    socket.on("send-message", (data: { serverId: number }) => {
+      io.to(roomName(data.serverId)).emit("receive-message", data);
+    });
+
+    socket.on(
+      "typing",
+      (data: { workspaceId: number; user: string }) => {
+        // socket.to (not io.to) so the typer doesn't see their own indicator
+        socket.to(roomName(data.workspaceId)).emit("typing", {
+          user: data.user,
+        });
+      }
+    );
+
+    // ================= DISCONNECT =================
+
+    socket.on("disconnect", () => {
+      presence.forEach((_, workspaceId) => {
+        leaveWorkspace(socket, workspaceId);
+      });
+    });
+  });
+};
+
+// Lets controllers (e.g. fileController) emit events to a workspace room
+export const getIO = () => io;

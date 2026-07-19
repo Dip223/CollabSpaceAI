@@ -1,12 +1,20 @@
 import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const getTransporter = () => {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error(
+      "Email service is not configured. Set EMAIL_USER and EMAIL_PASS on the server."
+    );
+  }
+
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+};
 
 // ================= VERIFY EMAIL =================
 
@@ -18,7 +26,7 @@ export const sendVerificationEmail = async (
   const verificationLink =
     `${process.env.SERVER_URL || "http://localhost:5000"}/api/auth/verify/${token}`;
 
-  await transporter.sendMail({
+  await getTransporter().sendMail({
 
     from: `"CollabSpace AI" <${process.env.EMAIL_USER}>`,
 
@@ -76,7 +84,7 @@ export const sendResetPasswordEmail = async (
   const resetLink =
     `${process.env.CLIENT_URL}/reset-password/${token}`;
 
-  await transporter.sendMail({
+  await getTransporter().sendMail({
 
     from: `"CollabSpace AI" <${process.env.EMAIL_USER}>`,
 

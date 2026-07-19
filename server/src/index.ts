@@ -11,15 +11,21 @@ import fileRoutes from "./routes/fileRoutes";
 
 import { initSocket } from "./socket/socket";
 
-dotenv.config();
+// Reload local .env values after a nodemon restart during development.
+dotenv.config({ override: true });
 
 const app = express();
+
+const allowedOrigins = (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean);
 
 // ================= Middleware =================
 
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: allowedOrigins,
     credentials: true,
   })
 );
