@@ -26,17 +26,38 @@ export default function Login() {
         password,
       });
 
+      // Save JWT Token
       localStorage.setItem("token", res.data.token);
-      localStorage.setItem("user", JSON.stringify(res.data.user));
-      localStorage.setItem("username", res.data.user.name);
-      localStorage.setItem("email", res.data.user.email);
-      localStorage.setItem("userId", String(res.data.user.id));
+
+      // Save entire user object (used for chat)
+      localStorage.setItem(
+        "user",
+        JSON.stringify(res.data.user)
+      );
+
+      // Save individual fields (optional)
+      localStorage.setItem(
+        "username",
+        res.data.user.name
+      );
+
+      localStorage.setItem(
+        "email",
+        res.data.user.email
+      );
+
+      localStorage.setItem(
+        "userId",
+        String(res.data.user.id)
+      );
 
       navigate("/dashboard");
     } catch (err: any) {
       setNeedsVerification(err.response?.status === 403);
-
-      alert(err.response?.data?.message || "Login failed");
+      alert(
+        err.response?.data?.message ||
+          "Login failed"
+      );
     } finally {
       setLoading(false);
     }
@@ -50,17 +71,11 @@ export default function Login() {
 
     try {
       setResending(true);
-
-      const res = await api.post("/auth/resend-verification", {
-        email,
-      });
-
+      const res = await api.post("/auth/resend-verification", { email });
       alert(res.data.message);
+      navigate(`/verify-email?email=${encodeURIComponent(email.trim())}`);
     } catch (err: any) {
-      alert(
-        err.response?.data?.message ||
-          "Could not resend verification email"
-      );
+      alert(err.response?.data?.message || "Could not resend verification email");
     } finally {
       setResending(false);
     }
@@ -69,6 +84,7 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center relative overflow-hidden">
       <div className="absolute w-96 h-96 bg-indigo-600 rounded-full blur-[140px] opacity-30 -top-32 -left-32" />
+
       <div className="absolute w-96 h-96 bg-cyan-500 rounded-full blur-[150px] opacity-20 bottom-0 right-0" />
 
       <motion.div
@@ -93,11 +109,12 @@ export default function Login() {
                 />
 
                 <Input
-                  type="email"
                   className="pl-10 bg-[#1e1f22] border-[#404249] text-white"
                   placeholder="Email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) =>
+                    setEmail(e.target.value)
+                  }
                 />
               </div>
 
@@ -112,7 +129,9 @@ export default function Login() {
                   className="pl-10 bg-[#1e1f22] border-[#404249] text-white"
                   placeholder="Password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) =>
+                    setPassword(e.target.value)
+                  }
                 />
               </div>
 
@@ -130,7 +149,9 @@ export default function Login() {
                 onClick={handleLogin}
                 disabled={loading}
               >
-                {loading ? "Signing In..." : "Login"}
+                {loading
+                  ? "Signing In..."
+                  : "Login"}
               </Button>
 
               {needsVerification && (
@@ -141,9 +162,7 @@ export default function Login() {
                   onClick={resendVerification}
                   disabled={resending}
                 >
-                  {resending
-                    ? "Sending verification email..."
-                    : "Resend verification email"}
+                  {resending ? "Sending verification email..." : "Resend verification email"}
                 </Button>
               )}
             </div>

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { AuthRequest } from "../middleware/authMiddleware";
 
 import prisma from "../config/prisma";
@@ -8,6 +9,24 @@ import {
   sendVerificationEmail,
   sendResetPasswordEmail,
 } from "../services/mailService";
+
+const createEmailOtp = () => crypto.randomInt(100000, 1000000).toString();
+const issueEmailOtp = async (user: { id: number; email: string }) => {
+  const otp = createEmailOtp();
+  const emailOtp = await bcrypt.hash(otp, 12);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailOtp,
+      emailOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      emailOtpAttempts: 0,
+      verifyToken: null,
+    },
+  });
+
+  await sendVerificationEmail(user.email, otp);
+};
 
 // ================= REGISTER =================
 
@@ -31,51 +50,31 @@ export const register = async (
     });
 
     if (existingUser) {
-      return res.status(400).json({
-        message: "Email already exists",
+      if (existingUser.isVerified) {
+        return res.status(409).json({ message: "Email already exists. Please log in." });
+      }
+
+      await issueEmailOtp(existingUser);
+      return res.status(200).json({
+        message: "This account is awaiting verification. A new OTP was sent to your email.",
       });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const requiresEmailVerification =
-      process.env.REQUIRE_EMAIL_VERIFICATION !== "false";
-
     const user = await prisma.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        isVerified: !requiresEmailVerification,
       },
     });
 
-    if (requiresEmailVerification) {
-      const verifyToken = jwt.sign(
-        { id: user.id },
-        process.env.JWT_SECRET as string,
-        {
-          expiresIn: "1d",
-        }
-      );
-
-      await prisma.user.update({
-        where: {
-          id: user.id,
-        },
-        data: {
-          verifyToken,
-        },
-      });
-
-      await sendVerificationEmail(user.email, verifyToken);
-    }
+    await issueEmailOtp(user);
 
     const { password: _, ...safeUser } = user;
 
     return res.status(201).json({
-      message: requiresEmailVerification
-        ? "User registered. Verification email sent."
-        : "User registered. Email verification is disabled for local development.",
+      message: "A 6-digit verification OTP was sent to your email.",
       user: safeUser,
     });
   } catch (error) {
@@ -158,35 +157,49 @@ export const login = async (
 
 // ================= VERIFY EMAIL =================
 
-export const verifyEmail = async (
+export const verifyEmailOtp = async (
   req: Request,
   res: Response
 ) => {
   try {
-    const token = String(req.params.token);
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const otp = String(req.body.otp || "").trim();
 
-    let tokenPayload: { id: number };
-    try {
-      tokenPayload = jwt.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as { id: number };
-    } catch {
-      return res.status(400).json({
-        message: "Verification link is invalid or has expired. Request a new one from the login page.",
-      });
+    if (!email || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ message: "Enter the email and 6-digit OTP." });
     }
 
     const user = await prisma.user.findFirst({
       where: {
-        verifyToken: token,
-        id: tokenPayload.id,
+        email: { equals: email, mode: "insensitive" },
       },
     });
 
-    if (!user) {
+    if (!user || !user.emailOtp || !user.emailOtpExpiresAt) {
       return res.status(400).json({
-        message: "Invalid token",
+        message: "Invalid OTP. Request a new code and try again.",
+      });
+    }
+
+    if (user.emailOtpExpiresAt < new Date()) {
+      return res.status(400).json({ message: "OTP has expired. Request a new code." });
+    }
+
+    const isValidOtp = await bcrypt.compare(otp, user.emailOtp);
+    if (!isValidOtp) {
+      const attempts = user.emailOtpAttempts + 1;
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: attempts >= 5
+          ? { emailOtp: null, emailOtpExpiresAt: null, emailOtpAttempts: 0 }
+          : { emailOtpAttempts: attempts },
+      });
+
+      return res.status(400).json({
+        message: attempts >= 5
+          ? "Too many incorrect attempts. Request a new OTP."
+          : "Incorrect OTP.",
       });
     }
 
@@ -197,11 +210,14 @@ export const verifyEmail = async (
       data: {
         isVerified: true,
         verifyToken: null,
+        emailOtp: null,
+        emailOtpExpiresAt: null,
+        emailOtpAttempts: 0,
       },
     });
 
     return res.json({
-      message: "Email verified successfully",
+      message: "Email verified successfully. You can now log in.",
     });
   } catch (error) {
     console.log(error);
@@ -239,32 +255,10 @@ export const resendVerification = async (
       });
     }
 
-    const verifyToken = jwt.sign(
-      {
-        id: user.id,
-      },
-      process.env.JWT_SECRET as string,
-      {
-        expiresIn: "1d",
-      }
-    );
-
-    await prisma.user.update({
-      where: {
-        id: user.id,
-      },
-      data: {
-        verifyToken,
-      },
-    });
-
-    await sendVerificationEmail(
-      user.email,
-      verifyToken
-    );
+    await issueEmailOtp(user);
 
     return res.json({
-      message: "Verification email sent again",
+      message: "A new 6-digit OTP was sent to your email.",
     });
   } catch (error) {
     console.log(error);

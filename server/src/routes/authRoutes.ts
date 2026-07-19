@@ -3,7 +3,7 @@ import express from "express";
 import {
   register,
   login,
-  verifyEmail,
+  verifyEmailOtp,
   resendVerification,
   forgotPassword,
   resetPassword,
@@ -20,8 +20,8 @@ router.post("/register", register);
 // ================= Login =================
 router.post("/login", login);
 
-// ================= Verify Email =================
-router.get("/verify/:token", verifyEmail);
+// ================= Verify Email OTP =================
+router.post("/verify-otp", verifyEmailOtp);
 
 // ================= Resend Verification =================
 router.post(

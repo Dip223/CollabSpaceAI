@@ -16,6 +16,9 @@ model User {
   isVerified          Boolean   @default(false)
 
   verifyToken         String?
+  emailOtp            String?
+  emailOtpExpiresAt   DateTime?
+  emailOtpAttempts    Int       @default(0)
   passwordResetToken  String?
   passwordResetExpiry DateTime?
 

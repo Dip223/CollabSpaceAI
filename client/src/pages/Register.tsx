@@ -55,7 +55,7 @@ export default function Register() {
 
     alert(res.data.message);
 
-    navigate("/login");
+    navigate(`/verify-email?email=${encodeURIComponent(form.email.trim())}`);
 
   } catch (err: any) {
 
