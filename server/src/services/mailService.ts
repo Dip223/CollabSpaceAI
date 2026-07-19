@@ -39,7 +39,7 @@ export const sendVerificationEmail = async (
           Please click the button below to verify your email.
         </p>
 
-        
+        <a
           href="${verificationLink}"
           style="
             display:inline-block;
@@ -97,7 +97,7 @@ export const sendResetPasswordEmail = async (
           Click the button below to create a new password.
         </p>
 
-        
+        <a
           href="${resetLink}"
           style="
             display:inline-block;
