@@ -8,72 +8,51 @@ import userRoutes from "./routes/userRoutes";
 import serverRoutes from "./routes/serverRoutes";
 import messageRoutes from "./routes/messageRoutes";
 import fileRoutes from "./routes/fileRoutes";
-
 import { initSocket } from "./socket/socket";
 
-// Reload local .env values after a nodemon restart during development.
 dotenv.config({ override: true });
 
 const app = express();
 
-const allowedOrigins = (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173")
-  .split(",")
-  .map((url) => url.trim())
-  .filter(Boolean);
-
-// ================= Middleware =================
+const allowedOrigins = new Set(
+  [
+    "http://localhost:5173",
+    "https://collab-space-ai.vercel.app",
+    process.env.CLIENT_URL,
+    ...(process.env.CLIENT_URLS || "").split(","),
+  ]
+    .map((origin) => origin?.trim())
+    .filter(Boolean)
+);
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
 
 app.use(express.json());
 
-// ================= Routes =================
+app.use("/api/auth", authRoutes);
+app.use("/api/user", userRoutes);
+app.use("/api/server", serverRoutes);
+app.use("/api/message", messageRoutes);
+app.use("/api/file", fileRoutes);
 
-app.use(
-  "/api/auth",
-  authRoutes
-);
-
-app.use(
-  "/api/user",
-  userRoutes
-);
-
-app.use(
-  "/api/server",
-  serverRoutes
-);
-
-app.use(
-  "/api/message",
-  messageRoutes
-);
-
-app.use(
-  "/api/file",
-  fileRoutes
-);
-
-// ================= Root =================
-
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.send("CollabSpace API Running 🚀");
 });
 
-// ================= HTTP Server =================
-
 const server = http.createServer(app);
 
-// ================= Socket.IO =================
-
 initSocket(server);
-
-// ================= Listen =================
 
 const PORT = Number(process.env.PORT) || 5000;
 
