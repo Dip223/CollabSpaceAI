@@ -1,16 +1,25 @@
+import dns from "node:dns";
 import nodemailer from "nodemailer";
 
-const getTransporter = () => {
+const smtpHostname = process.env.SMTP_HOST || "smtp.gmail.com";
+
+const getTransporter = async () => {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     throw new Error(
       "Email service is not configured. Set EMAIL_USER and EMAIL_PASS."
     );
   }
 
+  const ipv4Addresses = await dns.promises.resolve4(smtpHostname);
+
+  if (!ipv4Addresses.length) {
+    throw new Error("Could not resolve an IPv4 address for the SMTP server.");
+  }
+
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    host: ipv4Addresses[0],
     port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === "true",
+    secure: false,
     requireTLS: true,
 
     auth: {
@@ -19,7 +28,7 @@ const getTransporter = () => {
     },
 
     tls: {
-      servername: process.env.SMTP_HOST || "smtp.gmail.com",
+      servername: smtpHostname,
       minVersion: "TLSv1.2",
     },
 
@@ -37,15 +46,17 @@ export const sendVerificationEmail = async (
   email: string,
   otp: string
 ) => {
-  await getTransporter().sendMail({
+  const transporter = await getTransporter();
+
+  await transporter.sendMail({
     from: sender(),
     to: email,
     subject: "Your CollabSpace AI verification code",
-    text: `Your CollabSpace AI verification code is ${otp}. It expires in 10 minutes. Do not share this code with anyone.`,
+    text: `Your CollabSpace AI verification code is ${otp}. It expires in 10 minutes.`,
     html: `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
         <h2>Verify your CollabSpace AI account</h2>
-        <p>Enter this code in the verification page:</p>
+        <p>Enter this 6-digit code in the verification page:</p>
         <p style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#5865F2">
           ${otp}
         </p>
@@ -59,10 +70,11 @@ export const sendResetPasswordEmail = async (
   email: string,
   token: string
 ) => {
+  const transporter = await getTransporter();
   const resetLink =
     `${process.env.CLIENT_URL}/reset-password/${token}`;
 
-  await getTransporter().sendMail({
+  await transporter.sendMail({
     from: sender(),
     to: email,
     subject: "Reset your CollabSpace AI password",
