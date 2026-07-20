@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { FileText, Image as ImageIcon, File as FileIcon, Trash2, Download, Upload, Users, MessageSquare, FolderOpen, Copy, Check, Send } from "lucide-react";
+import { FileText, Image as ImageIcon, File as FileIcon, Trash2, Download, Upload, Users, MessageSquare, FolderOpen, Copy, Check, Send, Edit3 } from "lucide-react";
 
 import {
   getWorkspace,
@@ -18,6 +18,11 @@ import {
   downloadFile as downloadFileApi,
   deleteFile as deleteFileApi,
 } from "../services/fileApi";
+
+import {
+  getNote,
+  saveNote as saveNoteApi,
+} from "../services/noteApi";
 
 import socket from "../socket/socket";
 
@@ -122,11 +127,17 @@ export default function Workspace() {
   const [activity, setActivity] = useState<string[]>([]);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
+  const [noteContent, setNoteContent] = useState("");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [noteEditor, setNoteEditor] = useState("");
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map()
   );
+  const noteSaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteEditorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const pushActivity = (text: string) => {
     setActivity((prev) => [text, ...prev].slice(0, 6));
@@ -211,6 +222,17 @@ export default function Workspace() {
       }
     );
 
+    socket.on(
+      "note-update",
+      (data: { content: string; updatedBy: string }) => {
+        setNoteContent(data.content);
+        setNoteEditor(data.updatedBy);
+
+        if (noteEditorTimeout.current) clearTimeout(noteEditorTimeout.current);
+        noteEditorTimeout.current = setTimeout(() => setNoteEditor(""), 2000);
+      }
+    );
+
     return () => {
       socket.emit("leave-workspace", workspaceId);
 
@@ -222,9 +244,13 @@ export default function Workspace() {
       socket.off("presence-update");
       socket.off("file-uploaded");
       socket.off("file-deleted");
+      socket.off("note-update");
 
       typingTimeouts.current.forEach((t) => clearTimeout(t));
       typingTimeouts.current.clear();
+
+      if (noteSaveTimeout.current) clearTimeout(noteSaveTimeout.current);
+      if (noteEditorTimeout.current) clearTimeout(noteEditorTimeout.current);
 
       socket.disconnect();
     };
@@ -247,9 +273,37 @@ export default function Workspace() {
 
       const fileRes = await getFiles(workspaceId);
       setFiles(fileRes.data.files);
+
+      const noteRes = await getNote(workspaceId);
+      setNoteContent(noteRes.content || "");
     } catch (err) {
       console.log(err);
     }
+  };
+
+  const handleNoteChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const content = e.target.value;
+    setNoteContent(content);
+
+    // Live-broadcast every keystroke so other members see it as you type.
+    socket.emit("note-update", {
+      workspaceId,
+      content,
+      updatedBy: currentUser().name,
+    });
+
+    // Persist to the database on a short debounce rather than on every
+    // keystroke, same pattern as the typing indicator elsewhere on this page.
+    setNoteStatus("saving");
+    if (noteSaveTimeout.current) clearTimeout(noteSaveTimeout.current);
+    noteSaveTimeout.current = setTimeout(async () => {
+      try {
+        await saveNoteApi(workspaceId, content);
+        setNoteStatus("saved");
+      } catch (err) {
+        console.log(err);
+      }
+    }, 700);
   };
 
   const sendMessage = async () => {
@@ -672,6 +726,34 @@ export default function Workspace() {
               ))
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Shared Notepad */}
+      <div className="px-6 pb-6">
+        <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-4 border-b border-white/5">
+            <Edit3 size={16} className="text-indigo-400" />
+            <h2 className="text-white font-semibold">Shared Notepad</h2>
+
+            <span className="text-xs text-gray-500 ml-auto flex items-center gap-3">
+              {noteEditor && noteEditor !== me.name && (
+                <span className="text-indigo-400 italic">
+                  {noteEditor} is editing...
+                </span>
+              )}
+              {noteStatus === "saving" && "Saving..."}
+              {noteStatus === "saved" && "Saved"}
+            </span>
+          </div>
+
+          <textarea
+            value={noteContent}
+            onChange={handleNoteChange}
+            placeholder="Start typing — everyone in this workspace sees updates live, and it's saved automatically."
+            className="w-full bg-[#1e1f22] text-white text-sm leading-relaxed p-5 outline-none resize-y placeholder:text-gray-500"
+            style={{ minHeight: "260px" }}
+          />
         </div>
       </div>
     </div>

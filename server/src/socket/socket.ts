@@ -120,6 +120,20 @@ export const initSocket = (server: http.Server) => {
       }
     );
 
+    // ================= SHARED NOTEPAD =================
+    // Persistence goes through the REST /api/note endpoint (debounced on the
+    // client); this just relays live keystrokes to everyone else in the room.
+
+    socket.on(
+      "note-update",
+      (data: { workspaceId: number; content: string; updatedBy: string }) => {
+        socket.to(roomName(data.workspaceId)).emit("note-update", {
+          content: data.content,
+          updatedBy: data.updatedBy,
+        });
+      }
+    );
+
     // ================= DISCONNECT =================
 
     socket.on("disconnect", () => {

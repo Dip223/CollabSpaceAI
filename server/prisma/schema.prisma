@@ -43,6 +43,7 @@ model Server {
   members      Membership[]
   files        File[]
   messages     Message[]
+  note         Note?
 }
 
 model Membership {
@@ -74,6 +75,19 @@ model File {
 
   server       Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
   uploader     User   @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+}
+
+model Note {
+  id          Int      @id @default(autoincrement())
+
+  content     String   @default("")
+
+  serverId    Int      @unique
+  updatedBy   Int?
+
+  updatedAt   DateTime @updatedAt
+
+  server      Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
 }
 
 model Message {
