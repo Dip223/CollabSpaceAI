@@ -1,5 +1,6 @@
+import dns from "dns";
 import nodemailer, { Transporter } from "nodemailer";
-import type SMTPPool from "nodemailer/lib/smtp-pool";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 
 const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
 const smtpPort = Number(process.env.SMTP_PORT) || 587;
@@ -15,49 +16,67 @@ const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
 const senderName = process.env.EMAIL_FROM_NAME || "CollabSpace AI";
 const senderEmail = process.env.EMAIL_FROM || smtpUser;
 
-let transporter: Transporter | null = null;
+// Nodemailer does its OWN internal DNS resolution (dns.resolve4/resolve6) and
+// ignores both the `family` transport option and Node's dns.setDefaultResultOrder.
+// On Render, its internal IPv4 lookup for smtp.gmail.com fails while the IPv6
+// lookup succeeds, so it connects to the AAAA address — which Render's network
+// can't route (ENETUNREACH). Resolving the A record ourselves with dns.lookup
+// (which Render *can* do reliably) and handing nodemailer the literal IPv4
+// address sidesteps its resolver entirely.
+const resolveIPv4 = (hostname: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    dns.lookup(hostname, { family: 4 }, (err, address) => {
+      if (err) {
+        console.error(`IPv4 lookup for ${hostname} failed, falling back to hostname:`, err.message);
+        return resolve(null);
+      }
+      resolve(address);
+    });
+  });
 
-const getTransporter = () => {
+// Builds a fresh transporter (with a fresh IPv4 lookup) per call rather than
+// caching one for the process lifetime. Gmail load-balances across several
+// IPs, so a cached resolution could go stale mid-run; this app only sends
+// occasional auth emails, so the extra DNS lookup (a few ms) is a non-issue.
+const buildTransporter = async (): Promise<Transporter> => {
   if (!smtpUser || !smtpPass) {
     throw new Error(
       "SMTP email service is not configured. Set SMTP_USER/SMTP_PASS (or EMAIL_USER/EMAIL_PASS)."
     );
   }
 
-  if (transporter) return transporter;
+  const resolvedIp = await resolveIPv4(smtpHost);
 
-  // `family` is a real, supported nodemailer/SMTPConnection option (forwarded to
-  // Node's net.connect) but is missing from the currently installed @types/nodemailer.
-  const options: SMTPPool.Options & { family?: number } = {
-    pool: true,
-    host: smtpHost,
+  // `servername` is a real, supported SMTPConnection option (used for TLS SNI /
+  // certificate hostname validation) but is missing from the currently
+  // installed @types/nodemailer, so it's added via an intersection type below.
+  const options: SMTPTransport.Options & { servername?: string } = {
+    host: resolvedIp || smtpHost,
+    // Gmail's cert is issued for the hostname, not the IP, so SNI/cert checks
+    // need the original hostname even when we connect to a literal IP.
+    servername: smtpHost,
     port: smtpPort,
     secure: smtpSecure,
     auth: {
       user: smtpUser,
       pass: smtpPass,
     },
-    // Render (and several other hosts) resolve smtp.gmail.com's AAAA record but can't
-    // actually route IPv6 egress, so the socket just hangs until it times out.
-    // Forcing IPv4 here is what actually fixes the "ETIMEDOUT" seen in Render logs.
-    family: 4,
-    maxConnections: 3,
     // Fail fast instead of hanging until the platform's own request timeout kicks in.
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
     socketTimeout: 20_000,
   };
 
-  transporter = nodemailer.createTransport(options);
-
-  return transporter;
+  return nodemailer.createTransport(options);
 };
 
 // Verifies SMTP auth/connectivity once at boot so misconfiguration shows up
 // immediately in the Render logs instead of on the first user's registration attempt.
 export const verifyMailTransport = async () => {
   try {
-    await getTransporter().verify();
+    const tx = await buildTransporter();
+    await tx.verify();
+    tx.close();
     console.log(`✅ SMTP ready (${smtpHost}:${smtpPort}, secure=${smtpSecure})`);
   } catch (error: any) {
     console.error(
@@ -74,8 +93,10 @@ type EmailPayload = {
 };
 
 const sendEmail = async ({ to, subject, text, html }: EmailPayload) => {
+  const tx = await buildTransporter();
+
   try {
-    await getTransporter().sendMail({
+    await tx.sendMail({
       from: `"${senderName}" <${senderEmail}>`,
       to,
       subject,
@@ -85,6 +106,8 @@ const sendEmail = async ({ to, subject, text, html }: EmailPayload) => {
   } catch (error: any) {
     console.error(`SMTP email delivery failed for ${to}:`, error?.message || error);
     throw new Error(`Email delivery failed: ${error?.message || "Unknown SMTP error"}`);
+  } finally {
+    tx.close();
   }
 };
 
