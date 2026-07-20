@@ -1,87 +1,53 @@
-import dns from "dns";
-import nodemailer, { Transporter } from "nodemailer";
-import type SMTPTransport from "nodemailer/lib/smtp-transport";
+const brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
 
-const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
-const smtpPort = Number(process.env.SMTP_PORT) || 587;
-// Port 465 = implicit TLS. Port 587/25 = STARTTLS (secure must be false, nodemailer upgrades the connection itself).
-const smtpSecure = process.env.SMTP_SECURE
-  ? process.env.SMTP_SECURE === "true"
-  : smtpPort === 465;
+// Render's free-tier network blocks outbound SMTP port connections entirely —
+// confirmed by both smtp.gmail.com and smtp-relay.brevo.com timing out
+// identically on port 587 even after fixing DNS/IPv6 resolution. HTTPS (443)
+// is never blocked, so Brevo's HTTP API is used instead of raw SMTP.
+const sendViaBrevoApi = async (payload: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}) => {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderName = process.env.BREVO_SENDER_NAME || "CollabSpace AI";
 
-// Falls back to the existing EMAIL_USER / EMAIL_PASS vars so no env changes are required on Render.
-const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
-const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-
-const senderName = process.env.EMAIL_FROM_NAME || "CollabSpace AI";
-const senderEmail = process.env.EMAIL_FROM || smtpUser;
-
-// Nodemailer does its OWN internal DNS resolution (dns.resolve4/resolve6) and
-// ignores both the `family` transport option and Node's dns.setDefaultResultOrder.
-// On Render, its internal IPv4 lookup for smtp.gmail.com fails while the IPv6
-// lookup succeeds, so it connects to the AAAA address — which Render's network
-// can't route (ENETUNREACH). Resolving the A record ourselves with dns.lookup
-// (which Render *can* do reliably) and handing nodemailer the literal IPv4
-// address sidesteps its resolver entirely.
-const resolveIPv4 = (hostname: string): Promise<string | null> =>
-  new Promise((resolve) => {
-    dns.lookup(hostname, { family: 4 }, (err, address) => {
-      if (err) {
-        console.error(`IPv4 lookup for ${hostname} failed, falling back to hostname:`, err.message);
-        return resolve(null);
-      }
-      resolve(address);
-    });
-  });
-
-// Builds a fresh transporter (with a fresh IPv4 lookup) per call rather than
-// caching one for the process lifetime. Gmail load-balances across several
-// IPs, so a cached resolution could go stale mid-run; this app only sends
-// occasional auth emails, so the extra DNS lookup (a few ms) is a non-issue.
-const buildTransporter = async (): Promise<Transporter> => {
-  if (!smtpUser || !smtpPass) {
+  if (!apiKey || !senderEmail) {
     throw new Error(
-      "SMTP email service is not configured. Set SMTP_USER/SMTP_PASS (or EMAIL_USER/EMAIL_PASS)."
+      "Brevo email service is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL."
     );
   }
 
-  const resolvedIp = await resolveIPv4(smtpHost);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
 
-  // `servername` is a real, supported SMTPConnection option (used for TLS SNI /
-  // certificate hostname validation) but is missing from the currently
-  // installed @types/nodemailer, so it's added via an intersection type below.
-  const options: SMTPTransport.Options & { servername?: string } = {
-    host: resolvedIp || smtpHost,
-    // Gmail's cert is issued for the hostname, not the IP, so SNI/cert checks
-    // need the original hostname even when we connect to a literal IP.
-    servername: smtpHost,
-    port: smtpPort,
-    secure: smtpSecure,
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-    // Fail fast instead of hanging until the platform's own request timeout kicks in.
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
-    socketTimeout: 20_000,
-  };
-
-  return nodemailer.createTransport(options);
-};
-
-// Verifies SMTP auth/connectivity once at boot so misconfiguration shows up
-// immediately in the Render logs instead of on the first user's registration attempt.
-export const verifyMailTransport = async () => {
+  let response: Response;
   try {
-    const tx = await buildTransporter();
-    await tx.verify();
-    tx.close();
-    console.log(`✅ SMTP ready (${smtpHost}:${smtpPort}, secure=${smtpSecure})`);
-  } catch (error: any) {
-    console.error(
-      `⚠️  SMTP verification failed (${smtpHost}:${smtpPort}): ${error?.message || error}`
-    );
+    response = await fetch(brevoApiUrl, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "api-key": apiKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { name: senderName, email: senderEmail },
+        to: [{ email: payload.to }],
+        subject: payload.subject,
+        textContent: payload.text,
+        htmlContent: payload.html,
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Brevo email delivery failed (${response.status}): ${errorText}`);
   }
 };
 
@@ -92,23 +58,29 @@ type EmailPayload = {
   html: string;
 };
 
-const sendEmail = async ({ to, subject, text, html }: EmailPayload) => {
-  const tx = await buildTransporter();
-
+const sendEmail = async (payload: EmailPayload) => {
   try {
-    await tx.sendMail({
-      from: `"${senderName}" <${senderEmail}>`,
-      to,
-      subject,
-      text,
-      html,
-    });
+    await sendViaBrevoApi(payload);
   } catch (error: any) {
-    console.error(`SMTP email delivery failed for ${to}:`, error?.message || error);
-    throw new Error(`Email delivery failed: ${error?.message || "Unknown SMTP error"}`);
-  } finally {
-    tx.close();
+    console.error(`Email delivery failed for ${payload.to}:`, error?.message || error);
+    throw new Error(`Email delivery failed: ${error?.message || "Unknown error"}`);
   }
+};
+
+// Checks the Brevo API is configured at boot so misconfiguration shows up
+// immediately in the Render logs instead of on the first user's registration attempt.
+export const verifyMailTransport = async () => {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+
+  if (!apiKey || !senderEmail) {
+    console.error(
+      "⚠️  Brevo email service is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL."
+    );
+    return;
+  }
+
+  console.log(`✅ Brevo email API ready (sender: ${senderEmail})`);
 };
 
 export const sendVerificationEmail = async (
