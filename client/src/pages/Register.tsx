@@ -53,9 +53,13 @@ export default function Register() {
       }
     );
 
-    alert(res.data.message);
+    localStorage.setItem("token", res.data.token);
+    localStorage.setItem("user", JSON.stringify(res.data.user));
+    localStorage.setItem("username", res.data.user.name);
+    localStorage.setItem("email", res.data.user.email);
+    localStorage.setItem("userId", String(res.data.user.id));
 
-    navigate(`/verify-email?email=${encodeURIComponent(form.email.trim())}`);
+    navigate("/dashboard");
 
   } catch (err: any) {
 

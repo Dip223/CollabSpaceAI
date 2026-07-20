@@ -50,14 +50,7 @@ export const register = async (
     });
 
     if (existingUser) {
-      if (existingUser.isVerified) {
-        return res.status(409).json({ message: "Email already exists. Please log in." });
-      }
-
-      await issueEmailOtp(existingUser);
-      return res.status(200).json({
-        message: "This account is awaiting verification. A new OTP was sent to your email.",
-      });
+      return res.status(409).json({ message: "Email already exists. Please log in." });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -66,16 +59,32 @@ export const register = async (
         name,
         email,
         password: hashedPassword,
+        // Email delivery (SMTP/Brevo) has proven unreliable in this deployment
+        // environment, so accounts are verified immediately at signup instead
+        // of gating login behind an OTP email that may never arrive.
+        isVerified: true,
       },
     });
 
-    await issueEmailOtp(user);
-
-    const { password: _, ...safeUser } = user;
+    const token = jwt.sign(
+      {
+        id: user.id,
+      },
+      process.env.JWT_SECRET as string,
+      {
+        expiresIn: "7d",
+      }
+    );
 
     return res.status(201).json({
-      message: "A 6-digit verification OTP was sent to your email.",
-      user: safeUser,
+      message: "Account created successfully.",
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        isVerified: user.isVerified,
+      },
     });
   } catch (error) {
     console.log(error);
@@ -116,12 +125,6 @@ export const login = async (
     if (!match) {
       return res.status(401).json({
         message: "Wrong password",
-      });
-    }
-
-    if (!user.isVerified) {
-      return res.status(403).json({
-        message: "Please verify your email first.",
       });
     }
 
