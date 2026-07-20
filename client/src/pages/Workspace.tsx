@@ -1,6 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { FileText, Image as ImageIcon, File as FileIcon, Trash2, Download, Upload, Users, MessageSquare, FolderOpen, Copy, Check, Send, Edit3 } from "lucide-react";
+import jsPDF from "jspdf";
+import {
+  FileText,
+  Image as ImageIcon,
+  File as FileIcon,
+  Trash2,
+  Download,
+  Upload,
+  Users,
+  MessageSquare,
+  FolderOpen,
+  Copy,
+  Check,
+  Send,
+  Bold,
+  Italic,
+  Underline,
+  FileDown,
+} from "lucide-react";
 
 import {
   getWorkspace,
@@ -88,6 +106,14 @@ const AVATAR_COLORS = [
   "bg-violet-500",
 ];
 
+const FONT_OPTIONS = [
+  "Arial",
+  "Georgia",
+  "Times New Roman",
+  "Courier New",
+  "Verdana",
+];
+
 const initials = (name?: string) =>
   (name || "?")
     .trim()
@@ -98,6 +124,9 @@ const initials = (name?: string) =>
 
 const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
 
+const safeFileName = (name: string) =>
+  (name || "document").replace(/[^\w\- ]+/g, "").trim() || "document";
+
 const FileTypeIcon = ({ mimeType }: { mimeType: string }) => {
   if (mimeType.startsWith("image/")) {
     return <ImageIcon size={18} className="text-cyan-400 shrink-0" />;
@@ -107,6 +136,8 @@ const FileTypeIcon = ({ mimeType }: { mimeType: string }) => {
   }
   return <FileIcon size={18} className="text-indigo-400 shrink-0" />;
 };
+
+const PANEL_HEIGHT = "760px";
 
 export default function Workspace() {
   const { id } = useParams();
@@ -127,17 +158,26 @@ export default function Workspace() {
   const [activity, setActivity] = useState<string[]>([]);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
-  const [noteContent, setNoteContent] = useState("");
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const [noteEditor, setNoteEditor] = useState("");
+  const [noteTypers, setNoteTypers] = useState<string[]>([]);
+  const [activeFormats, setActiveFormats] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+  });
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const isEditorFocused = useRef(false);
+
   const typingTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map()
   );
+  const noteTypingTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
   const noteSaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const noteEditorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const pushActivity = (text: string) => {
     setActivity((prev) => [text, ...prev].slice(0, 6));
@@ -225,11 +265,27 @@ export default function Workspace() {
     socket.on(
       "note-update",
       (data: { content: string; updatedBy: string }) => {
-        setNoteContent(data.content);
-        setNoteEditor(data.updatedBy);
+        // Only overwrite the DOM if this user isn't actively typing —
+        // otherwise an incoming update would reset their cursor position.
+        if (!isEditorFocused.current && editorRef.current) {
+          editorRef.current.innerHTML = data.content;
+        }
 
-        if (noteEditorTimeout.current) clearTimeout(noteEditorTimeout.current);
-        noteEditorTimeout.current = setTimeout(() => setNoteEditor(""), 2000);
+        if (!data.updatedBy || data.updatedBy === user.name) return;
+
+        const existing = noteTypingTimeouts.current.get(data.updatedBy);
+        if (existing) clearTimeout(existing);
+
+        setNoteTypers((prev) =>
+          prev.includes(data.updatedBy) ? prev : [...prev, data.updatedBy]
+        );
+
+        const timeout = setTimeout(() => {
+          setNoteTypers((prev) => prev.filter((n) => n !== data.updatedBy));
+          noteTypingTimeouts.current.delete(data.updatedBy);
+        }, 2000);
+
+        noteTypingTimeouts.current.set(data.updatedBy, timeout);
       }
     );
 
@@ -249,8 +305,10 @@ export default function Workspace() {
       typingTimeouts.current.forEach((t) => clearTimeout(t));
       typingTimeouts.current.clear();
 
+      noteTypingTimeouts.current.forEach((t) => clearTimeout(t));
+      noteTypingTimeouts.current.clear();
+
       if (noteSaveTimeout.current) clearTimeout(noteSaveTimeout.current);
-      if (noteEditorTimeout.current) clearTimeout(noteEditorTimeout.current);
 
       socket.disconnect();
     };
@@ -275,35 +333,142 @@ export default function Workspace() {
       setFiles(fileRes.data.files);
 
       const noteRes = await getNote(workspaceId);
-      setNoteContent(noteRes.content || "");
+      if (editorRef.current) {
+        editorRef.current.innerHTML = noteRes.content || "";
+      }
     } catch (err) {
       console.log(err);
     }
   };
 
-  const handleNoteChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const content = e.target.value;
-    setNoteContent(content);
+  const refreshActiveFormats = () => {
+    setActiveFormats({
+      bold: document.queryCommandState("bold"),
+      italic: document.queryCommandState("italic"),
+      underline: document.queryCommandState("underline"),
+    });
+  };
+
+  const handleEditorInput = () => {
+    const html = editorRef.current?.innerHTML || "";
 
     // Live-broadcast every keystroke so other members see it as you type.
     socket.emit("note-update", {
       workspaceId,
-      content,
+      content: html,
       updatedBy: currentUser().name,
     });
 
     // Persist to the database on a short debounce rather than on every
-    // keystroke, same pattern as the typing indicator elsewhere on this page.
+    // keystroke, same pattern as the chat typing indicator on this page.
     setNoteStatus("saving");
     if (noteSaveTimeout.current) clearTimeout(noteSaveTimeout.current);
     noteSaveTimeout.current = setTimeout(async () => {
       try {
-        await saveNoteApi(workspaceId, content);
+        await saveNoteApi(workspaceId, html);
         setNoteStatus("saved");
       } catch (err) {
         console.log(err);
       }
     }, 700);
+
+    refreshActiveFormats();
+  };
+
+  const applyFormat = (command: string, value?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    handleEditorInput();
+  };
+
+  const exportPdf = () => {
+    const el = editorRef.current;
+    if (!el) return;
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const marginX = 48;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const maxWidth = pageWidth - marginX * 2;
+    let y = 56;
+
+    const blocks: { text: string; bold: boolean; italic: boolean }[] = [];
+    const nodes = Array.from(el.childNodes);
+
+    nodes.forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent || "";
+        if (text.trim()) blocks.push({ text, bold: false, italic: false });
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+      const elNode = node as HTMLElement;
+      const text = elNode.innerText || elNode.textContent || "";
+      if (!text.trim()) return;
+
+      const bold =
+        !!elNode.querySelector("b, strong") ||
+        ["B", "STRONG"].includes(elNode.tagName);
+      const italic =
+        !!elNode.querySelector("i, em") ||
+        ["I", "EM"].includes(elNode.tagName);
+
+      blocks.push({ text, bold, italic });
+    });
+
+    if (blocks.length === 0) {
+      const text = el.innerText || "";
+      if (text.trim()) blocks.push({ text, bold: false, italic: false });
+    }
+
+    doc.setFontSize(12);
+
+    blocks.forEach((block) => {
+      const style =
+        block.bold && block.italic
+          ? "bolditalic"
+          : block.bold
+          ? "bold"
+          : block.italic
+          ? "italic"
+          : "normal";
+      doc.setFont("helvetica", style);
+
+      const lines: string[] = doc.splitTextToSize(block.text, maxWidth);
+      lines.forEach((line) => {
+        if (y > pageHeight - 56) {
+          doc.addPage();
+          y = 56;
+        }
+        doc.text(line, marginX, y);
+        y += 18;
+      });
+      y += 6;
+    });
+
+    doc.save(`${safeFileName(workspace?.name || "document")}.pdf`);
+  };
+
+  const exportDoc = () => {
+    const el = editorRef.current;
+    if (!el) return;
+
+    const html = `<!DOCTYPE html>
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"><title>${workspace?.name || "Document"}</title></head>
+      <body>${el.innerHTML || ""}</body>
+      </html>`;
+
+    const blob = new Blob(["﻿", html], { type: "application/msword" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeFileName(workspace?.name || "document")}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const sendMessage = async () => {
@@ -413,6 +578,13 @@ export default function Workspace() {
     setTimeout(() => setCopiedInvite(false), 1500);
   };
 
+  const toolbarBtn = (active: boolean) =>
+    `h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
+      active
+        ? "bg-indigo-600 text-white"
+        : "text-gray-300 hover:bg-white/10 hover:text-white"
+    }`;
+
   return (
     <div className="min-h-screen bg-[#1e1f22]">
       {/* Header */}
@@ -484,69 +656,289 @@ export default function Workspace() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 p-6">
-        {/* Members */}
-        <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-white/5">
-            <Users size={16} className="text-indigo-400" />
-            <h2 className="text-white font-semibold">Members</h2>
-            <span className="text-xs text-gray-500 ml-auto">
-              {members.length}
-            </span>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-6 items-start">
+        {/* Left column: Members + Shared Files */}
+        <div
+          className="lg:col-span-3 flex flex-col gap-5"
+          style={{ height: PANEL_HEIGHT }}
+        >
+          {/* Members */}
+          <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden flex-1 min-h-0">
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/5 shrink-0">
+              <span className="h-7 w-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                <Users size={14} className="text-indigo-400" />
+              </span>
+              <h2 className="text-white font-semibold">Members</h2>
+              <span className="text-xs text-gray-500 ml-auto">
+                {members.length}
+              </span>
+            </div>
+
+            <div className="p-3 space-y-1.5 overflow-y-auto flex-1">
+              {members.map((member) => {
+                const online = onlineUserIds.has(member.id);
+                return (
+                  <div
+                    key={member.id}
+                    className="rounded-xl p-2.5 flex items-center gap-3 hover:bg-white/5 transition-colors"
+                  >
+                    <div className="relative shrink-0">
+                      <div
+                        className={`h-9 w-9 rounded-full ${avatarColor(
+                          member.id
+                        )} flex items-center justify-center text-white text-xs font-bold`}
+                      >
+                        {initials(member.name)}
+                      </div>
+                      <span
+                        className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
+                          online ? "bg-emerald-500" : "bg-gray-600"
+                        }`}
+                      />
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="text-white text-sm font-medium truncate">
+                        {member.name}
+                      </p>
+                      <p className="text-gray-500 text-xs truncate">
+                        {online ? "Online" : "Offline"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="p-3 space-y-1.5 overflow-y-auto" style={{ maxHeight: "560px" }}>
-            {members.map((member) => {
-              const online = onlineUserIds.has(member.id);
-              return (
-                <div
-                  key={member.id}
-                  className="rounded-xl p-2.5 flex items-center gap-3 hover:bg-white/5 transition-colors"
-                >
-                  <div className="relative shrink-0">
-                    <div
-                      className={`h-9 w-9 rounded-full ${avatarColor(
-                        member.id
-                      )} flex items-center justify-center text-white text-xs font-bold`}
-                    >
-                      {initials(member.name)}
-                    </div>
-                    <span
-                      className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#2b2d31] ${
-                        online ? "bg-emerald-500" : "bg-gray-600"
-                      }`}
-                    />
-                  </div>
+          {/* Shared Files */}
+          <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden flex-1 min-h-0">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="h-7 w-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                  <FolderOpen size={14} className="text-indigo-400" />
+                </span>
+                <h2 className="text-white font-semibold">Shared Files</h2>
+              </div>
 
-                  <div className="min-w-0">
-                    <p className="text-white text-sm font-medium truncate">
-                      {member.name}
-                    </p>
-                    <p className="text-gray-500 text-xs truncate">
-                      {online ? "Online" : "Offline"}
-                    </p>
-                  </div>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors text-white text-xs font-medium px-3 py-1.5 rounded-lg"
+              >
+                <Upload size={13} />
+                {uploading ? "Uploading..." : "Upload"}
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.zip,image/png,image/jpeg,image/gif,image/webp"
+                onChange={handleFileSelect}
+              />
+            </div>
+
+            <div className="p-3 overflow-y-auto space-y-2 flex-1">
+              {files.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
+                  <FolderOpen size={28} className="opacity-30" />
+                  <p className="text-sm text-center px-4">No files shared yet</p>
                 </div>
-              );
-            })}
+              ) : (
+                files.map((file) => (
+                  <div
+                    key={file.id}
+                    className="bg-[#1e1f22] rounded-xl p-3 flex items-start gap-3 hover:bg-[#232428] transition-colors group"
+                  >
+                    <div className="h-9 w-9 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                      <FileTypeIcon mimeType={file.mimeType} />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-white text-sm font-medium truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-gray-500 text-xs mt-0.5">
+                        {formatSize(file.size)} · {file.uploader.name}
+                      </p>
+                      <p className="text-gray-600 text-[11px] mt-0.5">
+                        {new Date(file.createdAt).toLocaleString([], {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 opacity-60 group-hover:opacity-100 transition-opacity shrink-0">
+                      <button
+                        onClick={() => handleDownload(file)}
+                        className="text-gray-400 hover:text-indigo-400"
+                        title="Download"
+                      >
+                        <Download size={15} />
+                      </button>
+
+                      {(file.uploader.id === me.id ||
+                        workspace?.ownerId === me.id) && (
+                        <button
+                          onClick={() => handleDeleteFile(file)}
+                          className="text-gray-400 hover:text-red-400"
+                          title="Delete"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Chat */}
-        <div className="lg:col-span-2 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-white/5">
-            <MessageSquare size={16} className="text-indigo-400" />
-            <h2 className="text-white font-semibold">Workspace Chat</h2>
+        {/* Center: Document editor */}
+        <div
+          className="lg:col-span-6 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden"
+          style={{ height: PANEL_HEIGHT }}
+        >
+          <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/5 shrink-0">
+            <span className="h-7 w-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+              <FileText size={14} className="text-indigo-400" />
+            </span>
+            <h2 className="text-white font-semibold">Shared Document</h2>
+
+            <span className="text-xs ml-auto flex items-center gap-3">
+              {noteTypers.length > 0 && (
+                <span className="text-indigo-400 italic">
+                  {noteTypers.length === 1
+                    ? `${noteTypers[0]} is editing...`
+                    : `${noteTypers.length} people editing...`}
+                </span>
+              )}
+              <span className="text-gray-500">
+                {noteStatus === "saving" && "Saving..."}
+                {noteStatus === "saved" && "Saved"}
+              </span>
+            </span>
+          </div>
+
+          {/* Toolbar */}
+          <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-white/5 bg-[#232428] shrink-0 flex-wrap">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyFormat("bold")}
+              className={toolbarBtn(activeFormats.bold)}
+              title="Bold"
+            >
+              <Bold size={15} />
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyFormat("italic")}
+              className={toolbarBtn(activeFormats.italic)}
+              title="Italic"
+            >
+              <Italic size={15} />
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyFormat("underline")}
+              className={toolbarBtn(activeFormats.underline)}
+              title="Underline"
+            >
+              <Underline size={15} />
+            </button>
+
+            <span className="w-px h-6 bg-white/10 mx-1" />
+
+            <select
+              defaultValue="Arial"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => applyFormat("fontName", e.target.value)}
+              className="bg-[#1e1f22] text-gray-200 text-xs rounded-lg px-2.5 py-1.5 outline-none ring-1 ring-transparent focus:ring-indigo-500 cursor-pointer"
+              title="Font"
+            >
+              {FONT_OPTIONS.map((font) => (
+                <option key={font} value={font}>
+                  {font}
+                </option>
+              ))}
+            </select>
+
+            <label
+              className="h-8 w-8 rounded-lg flex items-center justify-center cursor-pointer hover:bg-white/10 transition-colors overflow-hidden"
+              title="Text color"
+            >
+              <input
+                type="color"
+                defaultValue="#e5e7eb"
+                onChange={(e) => applyFormat("foreColor", e.target.value)}
+                className="opacity-0 absolute h-8 w-8 cursor-pointer"
+              />
+              <span className="text-xs font-bold text-gray-200 pointer-events-none">
+                A
+              </span>
+            </label>
+
+            <span className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={exportPdf}
+                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 transition-colors text-gray-200 text-xs font-medium px-3 py-1.5 rounded-lg"
+                title="Download as PDF"
+              >
+                <FileDown size={13} />
+                PDF
+              </button>
+              <button
+                type="button"
+                onClick={exportDoc}
+                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 transition-colors text-gray-200 text-xs font-medium px-3 py-1.5 rounded-lg"
+                title="Download as Word document"
+              >
+                <FileDown size={13} />
+                DOC
+              </button>
+            </span>
           </div>
 
           <div
-            className="flex-1 px-4 py-4 overflow-y-auto space-y-4"
-            style={{ height: "500px" }}
-          >
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={handleEditorInput}
+            onFocus={() => (isEditorFocused.current = true)}
+            onBlur={() => (isEditorFocused.current = false)}
+            onKeyUp={refreshActiveFormats}
+            onMouseUp={refreshActiveFormats}
+            data-placeholder="Start typing — everyone in this workspace sees updates live, and it's saved automatically."
+            className="flex-1 min-h-0 overflow-y-auto text-white text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-gray-500"
+          />
+        </div>
+
+        {/* Chat */}
+        <div
+          className="lg:col-span-3 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden"
+          style={{ height: PANEL_HEIGHT }}
+        >
+          <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/5 shrink-0">
+            <span className="h-7 w-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+              <MessageSquare size={14} className="text-indigo-400" />
+            </span>
+            <h2 className="text-white font-semibold">Workspace Chat</h2>
+          </div>
+
+          <div className="flex-1 min-h-0 px-4 py-4 overflow-y-auto space-y-4">
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
                 <MessageSquare size={28} className="opacity-30" />
-                <p className="text-sm">
+                <p className="text-sm text-center px-4">
                   No messages yet — say hi to get things started
                 </p>
               </div>
@@ -556,7 +948,7 @@ export default function Workspace() {
                 return (
                   <div
                     key={msg.id}
-                    className={`flex gap-2.5 max-w-[85%] ${
+                    className={`flex gap-2.5 max-w-[92%] ${
                       isMe ? "ml-auto flex-row-reverse" : ""
                     }`}
                   >
@@ -580,7 +972,7 @@ export default function Workspace() {
                           {msg.sender.name}
                         </p>
                       )}
-                      <p className="text-white text-sm leading-relaxed">
+                      <p className="text-white text-sm leading-relaxed break-words">
                         {msg.content}
                       </p>
                       <p
@@ -601,7 +993,7 @@ export default function Workspace() {
             <div ref={bottomRef}></div>
           </div>
 
-          <div className="px-4 h-6 -mt-1 flex items-center">
+          <div className="px-4 h-6 -mt-1 flex items-center shrink-0">
             {typingUsers.length > 0 && (
               <div className="flex items-center gap-1.5 text-xs text-gray-500 italic">
                 <span className="flex gap-0.5">
@@ -618,7 +1010,7 @@ export default function Workspace() {
             )}
           </div>
 
-          <div className="flex gap-2 p-4 pt-2 border-t border-white/5">
+          <div className="flex gap-2 p-4 pt-2 border-t border-white/5 shrink-0">
             <input
               className="flex-1 rounded-xl bg-[#1e1f22] text-white text-sm px-4 py-2.5 outline-none ring-1 ring-transparent focus:ring-indigo-500 transition-shadow placeholder:text-gray-500"
               placeholder="Type a message..."
@@ -632,128 +1024,12 @@ export default function Workspace() {
             <button
               onClick={sendMessage}
               disabled={!message.trim()}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 transition-colors px-4 rounded-xl text-white text-sm font-medium"
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 transition-colors px-4 rounded-xl text-white text-sm font-medium shrink-0"
             >
               <Send size={14} />
               Send
             </button>
           </div>
-        </div>
-
-        {/* Files */}
-        <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
-            <div className="flex items-center gap-2">
-              <FolderOpen size={16} className="text-indigo-400" />
-              <h2 className="text-white font-semibold">Shared Files</h2>
-            </div>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors text-white text-xs font-medium px-3 py-1.5 rounded-lg"
-            >
-              <Upload size={13} />
-              {uploading ? "Uploading..." : "Upload"}
-            </button>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              accept=".pdf,.doc,.docx,.zip,image/png,image/jpeg,image/gif,image/webp"
-              onChange={handleFileSelect}
-            />
-          </div>
-
-          <div
-            className="p-3 overflow-y-auto space-y-2"
-            style={{ height: "500px" }}
-          >
-            {files.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
-                <FolderOpen size={28} className="opacity-30" />
-                <p className="text-sm">No files shared yet</p>
-              </div>
-            ) : (
-              files.map((file) => (
-                <div
-                  key={file.id}
-                  className="bg-[#1e1f22] rounded-xl p-3 flex items-start gap-3 hover:bg-[#232428] transition-colors group"
-                >
-                  <div className="h-9 w-9 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                    <FileTypeIcon mimeType={file.mimeType} />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <p className="text-white text-sm font-medium truncate">
-                      {file.name}
-                    </p>
-                    <p className="text-gray-500 text-xs mt-0.5">
-                      {formatSize(file.size)} · {file.uploader.name}
-                    </p>
-                    <p className="text-gray-600 text-[11px] mt-0.5">
-                      {new Date(file.createdAt).toLocaleString([], {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-2 opacity-60 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button
-                      onClick={() => handleDownload(file)}
-                      className="text-gray-400 hover:text-indigo-400"
-                      title="Download"
-                    >
-                      <Download size={15} />
-                    </button>
-
-                    {(file.uploader.id === me.id ||
-                      workspace?.ownerId === me.id) && (
-                      <button
-                        onClick={() => handleDeleteFile(file)}
-                        className="text-gray-400 hover:text-red-400"
-                        title="Delete"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Shared Notepad */}
-      <div className="px-6 pb-6">
-        <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-white/5">
-            <Edit3 size={16} className="text-indigo-400" />
-            <h2 className="text-white font-semibold">Shared Notepad</h2>
-
-            <span className="text-xs text-gray-500 ml-auto flex items-center gap-3">
-              {noteEditor && noteEditor !== me.name && (
-                <span className="text-indigo-400 italic">
-                  {noteEditor} is editing...
-                </span>
-              )}
-              {noteStatus === "saving" && "Saving..."}
-              {noteStatus === "saved" && "Saved"}
-            </span>
-          </div>
-
-          <textarea
-            value={noteContent}
-            onChange={handleNoteChange}
-            placeholder="Start typing — everyone in this workspace sees updates live, and it's saved automatically."
-            className="w-full bg-[#1e1f22] text-white text-sm leading-relaxed p-5 outline-none resize-y placeholder:text-gray-500"
-            style={{ minHeight: "260px" }}
-          />
         </div>
       </div>
     </div>
