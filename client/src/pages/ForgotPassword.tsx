@@ -41,14 +41,15 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center">
+    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center px-4">
 
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-[430px]"
       >
 
-        <Card className="w-[430px] bg-[#2b2d31] border-[#3f4147]">
+        <Card className="w-full bg-[#2b2d31] border-[#3f4147]">
 
           <CardContent className="p-8">
 

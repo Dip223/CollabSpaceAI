@@ -82,7 +82,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center relative overflow-hidden">
+    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center relative overflow-hidden px-4">
       <div className="absolute w-96 h-96 bg-indigo-600 rounded-full blur-[140px] opacity-30 -top-32 -left-32" />
 
       <div className="absolute w-96 h-96 bg-cyan-500 rounded-full blur-[150px] opacity-20 bottom-0 right-0" />
@@ -90,8 +90,9 @@ export default function Login() {
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-[430px]"
       >
-        <Card className="w-[430px] bg-[#2b2d31] border-[#3f4147] shadow-2xl">
+        <Card className="w-full bg-[#2b2d31] border-[#3f4147] shadow-2xl">
           <CardContent className="p-8">
             <h1 className="text-3xl text-white font-bold">
               Welcome Back

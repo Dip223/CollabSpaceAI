@@ -137,8 +137,6 @@ const FileTypeIcon = ({ mimeType }: { mimeType: string }) => {
   return <FileIcon size={18} className="text-indigo-400 shrink-0" />;
 };
 
-const PANEL_HEIGHT = "760px";
-
 export default function Workspace() {
   const { id } = useParams();
   const workspaceId = Number(id);
@@ -656,12 +654,9 @@ export default function Workspace() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-4 sm:p-6 items-start">
         {/* Left column: Members + Shared Files */}
-        <div
-          className="lg:col-span-3 flex flex-col gap-5"
-          style={{ height: PANEL_HEIGHT }}
-        >
+        <div className="lg:col-span-3 flex flex-col gap-5 h-[420px] lg:h-[760px]">
           {/* Members */}
           <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden flex-1 min-h-0">
             <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/5 shrink-0">
@@ -800,10 +795,7 @@ export default function Workspace() {
         </div>
 
         {/* Center: Document editor */}
-        <div
-          className="lg:col-span-6 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden"
-          style={{ height: PANEL_HEIGHT }}
-        >
+        <div className="lg:col-span-6 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden h-[520px] lg:h-[760px]">
           <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/5 shrink-0">
             <span className="h-7 w-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
               <FileText size={14} className="text-indigo-400" />
@@ -829,7 +821,7 @@ export default function Workspace() {
           <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-white/5 bg-[#232428] shrink-0 flex-wrap">
             <button
               type="button"
-              onMouseDown={(e) => e.preventDefault()}
+              onPointerDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("bold")}
               className={toolbarBtn(activeFormats.bold)}
               title="Bold"
@@ -838,7 +830,7 @@ export default function Workspace() {
             </button>
             <button
               type="button"
-              onMouseDown={(e) => e.preventDefault()}
+              onPointerDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("italic")}
               className={toolbarBtn(activeFormats.italic)}
               title="Italic"
@@ -847,7 +839,7 @@ export default function Workspace() {
             </button>
             <button
               type="button"
-              onMouseDown={(e) => e.preventDefault()}
+              onPointerDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("underline")}
               className={toolbarBtn(activeFormats.underline)}
               title="Underline"
@@ -923,10 +915,7 @@ export default function Workspace() {
         </div>
 
         {/* Chat */}
-        <div
-          className="lg:col-span-3 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden"
-          style={{ height: PANEL_HEIGHT }}
-        >
+        <div className="lg:col-span-3 bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-xl shadow-black/20 flex flex-col overflow-hidden h-[420px] lg:h-[760px]">
           <div className="flex items-center gap-2.5 px-5 py-4 border-b border-white/5 shrink-0">
             <span className="h-7 w-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
               <MessageSquare size={14} className="text-indigo-400" />

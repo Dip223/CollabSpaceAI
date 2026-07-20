@@ -73,7 +73,7 @@ export default function Register() {
 };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#1e1f22] relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center bg-[#1e1f22] relative overflow-hidden px-4">
 
       {/* Background */}
       <div className="absolute inset-0 pointer-events-none">
@@ -85,8 +85,9 @@ export default function Register() {
         initial={{ opacity: 0, y: 25 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: .45 }}
+        className="w-full max-w-[430px]"
       >
-        <Card className="w-[430px] border-0 bg-[#2b2d31] shadow-2xl rounded-2xl">
+        <Card className="w-full border-0 bg-[#2b2d31] shadow-2xl rounded-2xl">
 
           <CardContent className="p-8">
 
