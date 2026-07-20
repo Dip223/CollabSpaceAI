@@ -1,4 +1,70 @@
-const brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
+import nodemailer, { Transporter } from "nodemailer";
+import type SMTPPool from "nodemailer/lib/smtp-pool";
+
+const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+const smtpPort = Number(process.env.SMTP_PORT) || 587;
+// Port 465 = implicit TLS. Port 587/25 = STARTTLS (secure must be false, nodemailer upgrades the connection itself).
+const smtpSecure = process.env.SMTP_SECURE
+  ? process.env.SMTP_SECURE === "true"
+  : smtpPort === 465;
+
+// Falls back to the existing EMAIL_USER / EMAIL_PASS vars so no env changes are required on Render.
+const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
+const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+
+const senderName = process.env.EMAIL_FROM_NAME || "CollabSpace AI";
+const senderEmail = process.env.EMAIL_FROM || smtpUser;
+
+let transporter: Transporter | null = null;
+
+const getTransporter = () => {
+  if (!smtpUser || !smtpPass) {
+    throw new Error(
+      "SMTP email service is not configured. Set SMTP_USER/SMTP_PASS (or EMAIL_USER/EMAIL_PASS)."
+    );
+  }
+
+  if (transporter) return transporter;
+
+  // `family` is a real, supported nodemailer/SMTPConnection option (forwarded to
+  // Node's net.connect) but is missing from the currently installed @types/nodemailer.
+  const options: SMTPPool.Options & { family?: number } = {
+    pool: true,
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+    // Render (and several other hosts) resolve smtp.gmail.com's AAAA record but can't
+    // actually route IPv6 egress, so the socket just hangs until it times out.
+    // Forcing IPv4 here is what actually fixes the "ETIMEDOUT" seen in Render logs.
+    family: 4,
+    maxConnections: 3,
+    // Fail fast instead of hanging until the platform's own request timeout kicks in.
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 20_000,
+  };
+
+  transporter = nodemailer.createTransport(options);
+
+  return transporter;
+};
+
+// Verifies SMTP auth/connectivity once at boot so misconfiguration shows up
+// immediately in the Render logs instead of on the first user's registration attempt.
+export const verifyMailTransport = async () => {
+  try {
+    await getTransporter().verify();
+    console.log(`✅ SMTP ready (${smtpHost}:${smtpPort}, secure=${smtpSecure})`);
+  } catch (error: any) {
+    console.error(
+      `⚠️  SMTP verification failed (${smtpHost}:${smtpPort}): ${error?.message || error}`
+    );
+  }
+};
 
 type EmailPayload = {
   to: string;
@@ -7,48 +73,18 @@ type EmailPayload = {
   html: string;
 };
 
-const sendEmail = async ({
-  to,
-  subject,
-  text,
-  html,
-}: EmailPayload) => {
-  const apiKey = process.env.BREVO_API_KEY;
-  const senderEmail = process.env.BREVO_SENDER_EMAIL;
-  const senderName =
-    process.env.BREVO_SENDER_NAME || "CollabSpace AI";
-
-  if (!apiKey || !senderEmail) {
-    throw new Error(
-      "Brevo email service is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL."
-    );
-  }
-
-  const response = await fetch(brevoApiUrl, {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "api-key": apiKey,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      sender: {
-        name: senderName,
-        email: senderEmail,
-      },
-      to: [{ email: to }],
+const sendEmail = async ({ to, subject, text, html }: EmailPayload) => {
+  try {
+    await getTransporter().sendMail({
+      from: `"${senderName}" <${senderEmail}>`,
+      to,
       subject,
-      textContent: text,
-      htmlContent: html,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-
-    throw new Error(
-      `Brevo email delivery failed (${response.status}): ${errorText}`
-    );
+      text,
+      html,
+    });
+  } catch (error: any) {
+    console.error(`SMTP email delivery failed for ${to}:`, error?.message || error);
+    throw new Error(`Email delivery failed: ${error?.message || "Unknown SMTP error"}`);
   }
 };
 

@@ -1,3 +1,4 @@
+import dns from "dns";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -9,6 +10,11 @@ import serverRoutes from "./routes/serverRoutes";
 import messageRoutes from "./routes/messageRoutes";
 import fileRoutes from "./routes/fileRoutes";
 import { initSocket } from "./socket/socket";
+import { verifyMailTransport } from "./services/mailService";
+
+// Render's network resolves SMTP hosts to IPv6 but can't route it, which is
+// what caused the SMTP connection timeouts in the logs. Prefer IPv4 host-wide.
+dns.setDefaultResultOrder("ipv4first");
 
 dotenv.config({ override: true });
 
@@ -58,4 +64,5 @@ const PORT = Number(process.env.PORT) || 5000;
 
 server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  verifyMailTransport();
 });
