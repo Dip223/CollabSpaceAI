@@ -83,9 +83,11 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center relative overflow-hidden px-4">
-      <div className="absolute w-96 h-96 bg-indigo-600 rounded-full blur-[140px] opacity-30 -top-32 -left-32" />
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute w-96 h-96 bg-indigo-600 rounded-full blur-[140px] opacity-30 -top-32 -left-32" />
 
-      <div className="absolute w-96 h-96 bg-cyan-500 rounded-full blur-[150px] opacity-20 bottom-0 right-0" />
+        <div className="absolute w-96 h-96 bg-cyan-500 rounded-full blur-[150px] opacity-20 bottom-0 right-0" />
+      </div>
 
       <motion.div
         initial={{ opacity: 0, y: 40 }}
