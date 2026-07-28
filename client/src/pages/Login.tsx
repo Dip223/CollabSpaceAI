@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Mail, Lock } from "lucide-react";
+import { Mail, Lock, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -150,9 +150,14 @@ export default function Login() {
                 onClick={handleLogin}
                 disabled={loading}
               >
-                {loading
-                  ? "Signing In..."
-                  : "Login"}
+                {loading ? (
+                  <>
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                    Signing In...
+                  </>
+                ) : (
+                  "Login"
+                )}
               </Button>
 
               {needsVerification && (

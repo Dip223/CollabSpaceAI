@@ -7,6 +7,7 @@ import {
   Mail,
   Lock,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +24,7 @@ export default function Register() {
     password: "",
     confirmPassword: "",
   });
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({
@@ -43,6 +45,8 @@ export default function Register() {
   }
 
   try {
+
+    setLoading(true);
 
     const res = await api.post(
       "/auth/register",
@@ -67,6 +71,10 @@ export default function Register() {
       err.response?.data?.message ||
       "Registration Failed"
     );
+
+  } finally {
+
+    setLoading(false);
 
   }
 
@@ -217,13 +225,20 @@ export default function Register() {
 
     <button
   type="submit"
-  className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white flex items-center justify-center"
+  disabled={loading}
+  className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:hover:bg-indigo-600 rounded-lg text-white flex items-center justify-center transition-colors"
 >
-  Create Account
-  <ArrowRight
-    size={18}
-    className="ml-2"
-  />
+  {loading ? (
+    <>
+      <Loader2 size={18} className="mr-2 animate-spin" />
+      Creating account...
+    </>
+  ) : (
+    <>
+      Create Account
+      <ArrowRight size={18} className="ml-2" />
+    </>
+  )}
 </button>
           
 
