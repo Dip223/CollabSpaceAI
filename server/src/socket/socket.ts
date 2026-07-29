@@ -134,6 +134,20 @@ export const initSocket = (server: http.Server) => {
       }
     );
 
+    // ================= LIVE CURSORS =================
+    // Purely ephemeral presence data (like Google Docs' colored cursor labels)
+    // — never persisted, just relayed to everyone else in the room.
+
+    socket.on(
+      "note-cursor",
+      (data: { workspaceId: number; name: string; offset: number }) => {
+        socket.to(roomName(data.workspaceId)).emit("note-cursor", {
+          name: data.name,
+          offset: data.offset,
+        });
+      }
+    );
+
     // ================= DISCONNECT =================
 
     socket.on("disconnect", () => {

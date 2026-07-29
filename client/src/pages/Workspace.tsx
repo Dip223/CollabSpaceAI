@@ -127,6 +127,159 @@ const avatarColor = (id: number) => AVATAR_COLORS[id % AVATAR_COLORS.length];
 const safeFileName = (name: string) =>
   (name || "document").replace(/[^\w\- ]+/g, "").trim() || "document";
 
+// ================= LIVE CURSOR POSITIONING =================
+// Cursor positions are communicated as a plain character offset into the
+// editor's text content, rather than raw screen coordinates — screen
+// coordinates aren't portable between different users' viewports/scroll
+// positions, but a text offset can be turned back into a real DOM Range
+// (and then a screen position) locally on each client.
+
+const getTextOffset = (root: Node, node: Node, offset: number): number => {
+  let total = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let current: Node | null;
+  while ((current = walker.nextNode())) {
+    if (current === node) return total + offset;
+    total += current.textContent?.length || 0;
+  }
+  return total;
+};
+
+const getRangeFromOffset = (root: Node, target: number): Range | null => {
+  let total = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let current: Node | null;
+  while ((current = walker.nextNode())) {
+    const len = current.textContent?.length || 0;
+    if (total + len >= target) {
+      const range = document.createRange();
+      range.setStart(current, Math.max(0, target - total));
+      range.collapse(true);
+      return range;
+    }
+    total += len;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.collapse(false);
+  return range;
+};
+
+const CURSOR_COLORS = [
+  "#f43f5e",
+  "#6366f1",
+  "#22c55e",
+  "#f59e0b",
+  "#06b6d4",
+  "#a855f7",
+  "#ec4899",
+  "#14b8a6",
+];
+
+const cursorColorFor = (name: string) => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return CURSOR_COLORS[hash % CURSOR_COLORS.length];
+};
+
+// ================= PDF EXPORT STYLE RESOLUTION =================
+// jsPDF only ships helvetica/times/courier — map our toolbar's web fonts to
+// the closest built-in equivalent (embedding real font files is far more
+// involved and out of scope here).
+
+const PDF_FONT_MAP: Record<string, string> = {
+  Arial: "helvetica",
+  Verdana: "helvetica",
+  Georgia: "times",
+  "Times New Roman": "times",
+  "Courier New": "courier",
+};
+
+type TextRun = {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  color: [number, number, number];
+  font: string;
+};
+type PdfToken = TextRun | { break: true };
+
+const parseRgb = (css: string): [number, number, number] | null => {
+  const m = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+};
+
+// execCommand("foreColor") sets an explicit inline color (or a legacy
+// <font color> tag) on the exact node the user selected — walk up from the
+// text node looking for that, stopping at the editor root. We deliberately
+// don't use getComputedStyle for color: the editor's own container is styled
+// `text-white` for the dark UI, and getComputedStyle would resolve that
+// inherited white for every run that was never explicitly colored, which is
+// invisible once printed on a white PDF page.
+const findExplicitColor = (node: Element, root: Element): string | null => {
+  let current: Element | null = node;
+  while (current && current !== root) {
+    const inline = (current as HTMLElement).style?.color;
+    if (inline) return inline;
+    if (current.tagName === "FONT" && current.getAttribute("color")) {
+      return current.getAttribute("color");
+    }
+    current = current.parentElement;
+  }
+  return null;
+};
+
+const resolveRunStyle = (el: Element, root: Element): Omit<TextRun, "text"> => {
+  const cs = window.getComputedStyle(el);
+  const weight = parseInt(cs.fontWeight, 10) || (cs.fontWeight === "bold" ? 700 : 400);
+  const family = cs.fontFamily.split(",")[0].replace(/["']/g, "").trim();
+  const explicitColor = findExplicitColor(el, root);
+  const rgb = explicitColor ? parseRgb(explicitColor) || hexToRgb(explicitColor) : null;
+
+  return {
+    bold: weight >= 600,
+    italic: cs.fontStyle === "italic",
+    underline: (cs.textDecorationLine || cs.textDecoration || "").includes("underline"),
+    color: rgb || [17, 17, 17],
+    font: PDF_FONT_MAP[family] || "helvetica",
+  };
+};
+
+const hexToRgb = (hex: string): [number, number, number] | null => {
+  const m = hex.replace("#", "").match(/^([0-9a-f]{6})$/i);
+  if (!m) return null;
+  const num = parseInt(m[1], 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+};
+
+const walkForPdf = (node: Node, root: Element, tokens: PdfToken[]) => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent || "";
+    if (!text) return;
+    const parentEl = node.parentElement;
+    const style = parentEl
+      ? resolveRunStyle(parentEl, root)
+      : { bold: false, italic: false, underline: false, color: [17, 17, 17] as [number, number, number], font: "helvetica" };
+    tokens.push({ text, ...style });
+    return;
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+  const el = node as HTMLElement;
+  if (el.tagName === "BR") {
+    tokens.push({ break: true });
+    return;
+  }
+
+  const isBlock = el.tagName === "DIV" || el.tagName === "P";
+  node.childNodes.forEach((child) => walkForPdf(child, root, tokens));
+  if (isBlock) tokens.push({ break: true });
+};
+
 const FileTypeIcon = ({ mimeType }: { mimeType: string }) => {
   if (mimeType.startsWith("image/")) {
     return <ImageIcon size={18} className="text-cyan-400 shrink-0" />;
@@ -167,6 +320,7 @@ export default function Workspace() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const cursorLayerRef = useRef<HTMLDivElement>(null);
   const isEditorFocused = useRef(false);
 
   const typingTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -176,6 +330,9 @@ export default function Workspace() {
     new Map()
   );
   const noteSaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteCursors = useRef<
+    Map<string, { offset: number; updatedAt: number; color: string }>
+  >(new Map());
 
   const pushActivity = (text: string) => {
     setActivity((prev) => [text, ...prev].slice(0, 6));
@@ -269,6 +426,10 @@ export default function Workspace() {
           editorRef.current.innerHTML = data.content;
         }
 
+        // Content changed, so every remembered cursor offset now points at
+        // a possibly-different DOM position — recompute where they land.
+        renderCursorOverlay();
+
         if (!data.updatedBy || data.updatedBy === user.name) return;
 
         const existing = noteTypingTimeouts.current.get(data.updatedBy);
@@ -287,6 +448,25 @@ export default function Workspace() {
       }
     );
 
+    socket.on(
+      "note-cursor",
+      (data: { name: string; offset: number }) => {
+        if (!data.name || data.name === user.name) return;
+
+        remoteCursors.current.set(data.name, {
+          offset: data.offset,
+          updatedAt: Date.now(),
+          color: cursorColorFor(data.name),
+        });
+
+        renderCursorOverlay();
+      }
+    );
+
+    // Prunes cursors for members who went inactive/disconnected without a
+    // fresh event arriving to trigger a redraw (e.g. a closed tab).
+    const cursorPruneInterval = setInterval(renderCursorOverlay, 2000);
+
     return () => {
       socket.emit("leave-workspace", workspaceId);
 
@@ -299,6 +479,7 @@ export default function Workspace() {
       socket.off("file-uploaded");
       socket.off("file-deleted");
       socket.off("note-update");
+      socket.off("note-cursor");
 
       typingTimeouts.current.forEach((t) => clearTimeout(t));
       typingTimeouts.current.clear();
@@ -307,6 +488,8 @@ export default function Workspace() {
       noteTypingTimeouts.current.clear();
 
       if (noteSaveTimeout.current) clearTimeout(noteSaveTimeout.current);
+      clearInterval(cursorPruneInterval);
+      remoteCursors.current.clear();
 
       socket.disconnect();
     };
@@ -347,6 +530,116 @@ export default function Workspace() {
     });
   };
 
+  // Redraws every remote user's colored cursor + name label at their last
+  // known text offset, translated to a live screen position. Cheap enough to
+  // call on every keystroke/scroll/cursor event — it's plain DOM writes, not
+  // a React re-render.
+  const renderCursorOverlay = () => {
+    const layer = cursorLayerRef.current;
+    const editor = editorRef.current;
+    if (!layer || !editor) return;
+
+    const now = Date.now();
+    remoteCursors.current.forEach((entry, name) => {
+      if (now - entry.updatedAt > 6000) remoteCursors.current.delete(name);
+    });
+
+    const editorRect = editor.getBoundingClientRect();
+    const activeNames = new Set(remoteCursors.current.keys());
+
+    Array.from(layer.children).forEach((child) => {
+      const name = (child as HTMLElement).dataset.cursorName;
+      if (name && !activeNames.has(name)) layer.removeChild(child);
+    });
+
+    remoteCursors.current.forEach((entry, name) => {
+      const range = getRangeFromOffset(editor, entry.offset);
+      if (!range) return;
+
+      const rects = range.getClientRects();
+      const rect = rects[0] || range.getBoundingClientRect();
+      if (!rect) return;
+
+      const top = rect.top - editorRect.top;
+      const left = rect.left - editorRect.left;
+      // Hide (rather than remove) cursors currently scrolled out of view so
+      // they don't visually clip mid-character at the editor's edge.
+      const visible = top >= -4 && top <= editorRect.height;
+
+      let labelEl = layer.querySelector<HTMLDivElement>(
+        `[data-cursor-name="${CSS.escape(name)}"]`
+      );
+
+      if (!labelEl) {
+        labelEl = document.createElement("div");
+        labelEl.dataset.cursorName = name;
+        Object.assign(labelEl.style, {
+          position: "absolute",
+          pointerEvents: "none",
+          transition: "top 0.08s linear, left 0.08s linear",
+          zIndex: "10",
+        });
+
+        const bar = document.createElement("div");
+        Object.assign(bar.style, {
+          width: "2px",
+          height: "18px",
+          background: entry.color,
+          borderRadius: "1px",
+        });
+
+        const tag = document.createElement("div");
+        tag.textContent = name;
+        Object.assign(tag.style, {
+          position: "absolute",
+          bottom: "20px",
+          left: "0",
+          whiteSpace: "nowrap",
+          fontSize: "11px",
+          fontWeight: "600",
+          lineHeight: "1",
+          color: "#fff",
+          padding: "3px 6px",
+          borderRadius: "5px",
+          background: entry.color,
+          boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+        });
+
+        labelEl.appendChild(bar);
+        labelEl.appendChild(tag);
+        layer.appendChild(labelEl);
+      }
+
+      labelEl.style.top = `${top}px`;
+      labelEl.style.left = `${left}px`;
+      labelEl.style.display = visible ? "block" : "none";
+    });
+  };
+
+  const getCurrentCaretOffset = (): number | null => {
+    const editor = editorRef.current;
+    const sel = window.getSelection();
+    if (!editor || !sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.startContainer)) return null;
+    return getTextOffset(editor, range.startContainer, range.startOffset);
+  };
+
+  const broadcastCursor = () => {
+    const offset = getCurrentCaretOffset();
+    if (offset === null) return;
+    socket.emit("note-cursor", {
+      workspaceId,
+      name: currentUser().name,
+      offset,
+    });
+  };
+
+  const handleSelectionActivity = () => {
+    refreshActiveFormats();
+    broadcastCursor();
+  };
+
   const handleEditorInput = () => {
     const html = editorRef.current?.innerHTML || "";
 
@@ -370,7 +663,8 @@ export default function Workspace() {
       }
     }, 700);
 
-    refreshActiveFormats();
+    handleSelectionActivity();
+    renderCursorOverlay();
   };
 
   const applyFormat = (command: string, value?: string) => {
@@ -383,66 +677,73 @@ export default function Workspace() {
     const el = editorRef.current;
     if (!el) return;
 
+    if (!(el.innerText || "").trim()) {
+      alert("Write something in the document before exporting.");
+      return;
+    }
+
+    const tokens: PdfToken[] = [];
+    el.childNodes.forEach((child) => walkForPdf(child, el, tokens));
+
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const marginX = 48;
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const maxWidth = pageWidth - marginX * 2;
+    const lineHeight = 16;
+    let x = marginX;
     let y = 56;
-
-    const blocks: { text: string; bold: boolean; italic: boolean }[] = [];
-    const nodes = Array.from(el.childNodes);
-
-    nodes.forEach((node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent || "";
-        if (text.trim()) blocks.push({ text, bold: false, italic: false });
-        return;
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
-
-      const elNode = node as HTMLElement;
-      const text = elNode.innerText || elNode.textContent || "";
-      if (!text.trim()) return;
-
-      const bold =
-        !!elNode.querySelector("b, strong") ||
-        ["B", "STRONG"].includes(elNode.tagName);
-      const italic =
-        !!elNode.querySelector("i, em") ||
-        ["I", "EM"].includes(elNode.tagName);
-
-      blocks.push({ text, bold, italic });
-    });
-
-    if (blocks.length === 0) {
-      const text = el.innerText || "";
-      if (text.trim()) blocks.push({ text, bold: false, italic: false });
-    }
 
     doc.setFontSize(12);
 
-    blocks.forEach((block) => {
-      const style =
-        block.bold && block.italic
-          ? "bolditalic"
-          : block.bold
-          ? "bold"
-          : block.italic
-          ? "italic"
-          : "normal";
-      doc.setFont("helvetica", style);
+    const newLine = () => {
+      x = marginX;
+      y += lineHeight;
+      if (y > pageHeight - 56) {
+        doc.addPage();
+        y = 56;
+      }
+    };
 
-      const lines: string[] = doc.splitTextToSize(block.text, maxWidth);
-      lines.forEach((line) => {
-        if (y > pageHeight - 56) {
-          doc.addPage();
-          y = 56;
+    tokens.forEach((token) => {
+      if ("break" in token) {
+        newLine();
+        return;
+      }
+
+      const words = token.text.split(/(\s+)/).filter((w) => w.length > 0);
+
+      words.forEach((word) => {
+        const isSpace = /^\s+$/.test(word);
+        const style =
+          token.bold && token.italic
+            ? "bolditalic"
+            : token.bold
+            ? "bold"
+            : token.italic
+            ? "italic"
+            : "normal";
+
+        doc.setFont(token.font, style);
+        const width = doc.getTextWidth(word);
+
+        if (!isSpace && x + width > marginX + maxWidth) {
+          newLine();
         }
-        doc.text(line, marginX, y);
-        y += 18;
+        if (isSpace && x === marginX) {
+          return; // skip a leading space wrapped to the start of a new line
+        }
+
+        doc.setTextColor(token.color[0], token.color[1], token.color[2]);
+        doc.text(word, x, y);
+
+        if (token.underline && !isSpace) {
+          doc.setDrawColor(token.color[0], token.color[1], token.color[2]);
+          doc.line(x, y + 2, x + width, y + 2);
+        }
+
+        x += width;
       });
-      y += 6;
     });
 
     doc.save(`${safeFileName(workspace?.name || "document")}.pdf`);
@@ -451,6 +752,11 @@ export default function Workspace() {
   const exportDoc = () => {
     const el = editorRef.current;
     if (!el) return;
+
+    if (!(el.innerText || "").trim()) {
+      alert("Write something in the document before exporting.");
+      return;
+    }
 
     const html = `<!DOCTYPE html>
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -900,18 +1206,25 @@ export default function Workspace() {
             </span>
           </div>
 
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            onInput={handleEditorInput}
-            onFocus={() => (isEditorFocused.current = true)}
-            onBlur={() => (isEditorFocused.current = false)}
-            onKeyUp={refreshActiveFormats}
-            onMouseUp={refreshActiveFormats}
-            data-placeholder="Start typing — everyone in this workspace sees updates live, and it's saved automatically."
-            className="flex-1 min-h-0 overflow-y-auto text-white text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-gray-500"
-          />
+          <div className="flex-1 min-h-0 relative">
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={handleEditorInput}
+              onFocus={() => (isEditorFocused.current = true)}
+              onBlur={() => (isEditorFocused.current = false)}
+              onKeyUp={handleSelectionActivity}
+              onMouseUp={handleSelectionActivity}
+              onScroll={renderCursorOverlay}
+              data-placeholder="Start typing — everyone in this workspace sees updates live, and it's saved automatically."
+              className="h-full overflow-y-auto text-white text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-gray-500"
+            />
+            <div
+              ref={cursorLayerRef}
+              className="absolute inset-0 pointer-events-none overflow-hidden"
+            />
+          </div>
         </div>
 
         {/* Chat */}
