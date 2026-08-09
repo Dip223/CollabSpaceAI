@@ -6,11 +6,13 @@ import {
   User,
   Mail,
   Lock,
-  ArrowRight,
-  Loader2,
 } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+} from "@/components/ui/card";
+
 import { Input } from "@/components/ui/input";
 
 import api from "../services/api";
@@ -18,92 +20,127 @@ import api from "../services/api";
 export default function Register() {
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({
-    username: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-  });
-  const [loading, setLoading] = useState(false);
+  const [form, setForm] =
+    useState({
+      username: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+    });
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [loading, setLoading] =
+    useState(false);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     setForm({
       ...form,
-      [e.target.name]: e.target.value,
+      [e.target.name]:
+        e.target.value,
     });
   };
 
   const handleRegister = async (
-  e: React.FormEvent
-) => {
+    e: React.FormEvent
+  ) => {
+    e.preventDefault();
 
-  e.preventDefault();
+    if (
+      form.password !==
+      form.confirmPassword
+    ) {
+      alert(
+        "Passwords do not match"
+      );
 
-  if (form.password !== form.confirmPassword) {
-    alert("Passwords do not match");
-    return;
-  }
+      return;
+    }
 
-  try {
+    try {
+      setLoading(true);
 
-    setLoading(true);
+      const res = await api.post(
+        "/auth/register",
+        {
+          name: form.username,
+          email: form.email,
+          password: form.password,
+        }
+      );
 
-    const res = await api.post(
-      "/auth/register",
-      {
-        name: form.username,
-        email: form.email,
-        password: form.password,
-      }
-    );
+      localStorage.setItem(
+        "token",
+        res.data.token
+      );
 
-    localStorage.setItem("token", res.data.token);
-    localStorage.setItem("user", JSON.stringify(res.data.user));
-    localStorage.setItem("username", res.data.user.name);
-    localStorage.setItem("email", res.data.user.email);
-    localStorage.setItem("userId", String(res.data.user.id));
+      localStorage.setItem(
+        "user",
+        JSON.stringify(res.data.user)
+      );
 
-    navigate("/dashboard");
+      localStorage.setItem(
+        "username",
+        res.data.user.name
+      );
 
-  } catch (err: any) {
+      localStorage.setItem(
+        "email",
+        res.data.user.email
+      );
 
-    alert(
-      err.response?.data?.message ||
-      "Registration Failed"
-    );
+      localStorage.setItem(
+        "userId",
+        String(res.data.user.id)
+      );
 
-  } finally {
-
-    setLoading(false);
-
-  }
-
-};
+      navigate("/dashboard");
+    } catch (err: any) {
+      alert(
+        err.response?.data?.message ||
+          "Registration Failed"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#1e1f22] relative overflow-hidden px-4">
+    <div className="relative min-h-screen bg-background text-foreground flex items-center justify-center">
 
       {/* Background */}
       <div className="absolute inset-0 pointer-events-none">
+
         <div className="absolute left-0 top-0 h-[500px] w-[500px] rounded-full bg-indigo-700/20 blur-[180px]" />
+
         <div className="absolute right-0 bottom-0 h-[450px] w-[450px] rounded-full bg-cyan-500/10 blur-[180px]" />
+
       </div>
 
       <motion.div
-        initial={{ opacity: 0, y: 25 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: .45 }}
+        initial={{
+          opacity: 0,
+          y: 25,
+        }}
+        animate={{
+          opacity: 1,
+          y: 0,
+        }}
+        transition={{
+          duration: 0.45,
+        }}
         className="w-full max-w-[430px]"
       >
-        <Card className="w-full border-0 bg-[#2b2d31] shadow-2xl rounded-2xl">
+
+        <Card className="w-full border-0 bg-card shadow-2xl rounded-2xl">
 
           <CardContent className="p-8">
 
-            <h1 className="text-4xl font-bold text-white">
+            <h1 className="text-4xl font-bold text-foreground">
               Create Account
             </h1>
 
-            <p className="text-gray-400 mt-2 mb-8">
+            <p className="text-muted-foreground mt-2 mb-8">
               Join CollabSpace AI
             </p>
 
@@ -113,12 +150,11 @@ export default function Register() {
             >
 
               {/* Username */}
-
               <div className="relative">
 
                 <User
                   size={18}
-                  className="absolute left-3 top-3.5 text-gray-400"
+                  className="absolute left-3 top-3.5 text-muted-foreground"
                 />
 
                 <Input
@@ -129,10 +165,10 @@ export default function Register() {
                   className="
                     pl-10
                     h-12
-                    bg-[#1e1f22]
-                    border-[#3f4147]
-                    text-white
-                    placeholder:text-gray-500
+                    bg-background
+                    border-border
+                    text-foreground
+                    placeholder:text-muted-foreground
                     focus-visible:ring-indigo-500
                   "
                 />
@@ -140,12 +176,11 @@ export default function Register() {
               </div>
 
               {/* Email */}
-
               <div className="relative">
 
                 <Mail
                   size={18}
-                  className="absolute left-3 top-3.5 text-gray-400"
+                  className="absolute left-3 top-3.5 text-muted-foreground"
                 />
 
                 <Input
@@ -157,10 +192,10 @@ export default function Register() {
                   className="
                     pl-10
                     h-12
-                    bg-[#1e1f22]
-                    border-[#3f4147]
-                    text-white
-                    placeholder:text-gray-500
+                    bg-background
+                    border-border
+                    text-foreground
+                    placeholder:text-muted-foreground
                     focus-visible:ring-indigo-500
                   "
                 />
@@ -168,12 +203,11 @@ export default function Register() {
               </div>
 
               {/* Password */}
-
               <div className="relative">
 
                 <Lock
                   size={18}
-                  className="absolute left-3 top-3.5 text-gray-400"
+                  className="absolute left-3 top-3.5 text-muted-foreground"
                 />
 
                 <Input
@@ -185,10 +219,10 @@ export default function Register() {
                   className="
                     pl-10
                     h-12
-                    bg-[#1e1f22]
-                    border-[#3f4147]
-                    text-white
-                    placeholder:text-gray-500
+                    bg-background
+                    border-border
+                    text-foreground
+                    placeholder:text-muted-foreground
                     focus-visible:ring-indigo-500
                   "
                 />
@@ -196,69 +230,64 @@ export default function Register() {
               </div>
 
               {/* Confirm Password */}
-
               <div className="relative">
 
                 <Lock
                   size={18}
-                  className="absolute left-3 top-3.5 text-gray-400"
+                  className="absolute left-3 top-3.5 text-muted-foreground"
                 />
 
                 <Input
                   type="password"
                   name="confirmPassword"
                   placeholder="Confirm Password"
-                  value={form.confirmPassword}
+                  value={
+                    form.confirmPassword
+                  }
                   onChange={handleChange}
                   className="
                     pl-10
                     h-12
-                    bg-[#1e1f22]
-                    border-[#3f4147]
-                    text-white
-                    placeholder:text-gray-500
+                    bg-background
+                    border-border
+                    text-foreground
+                    placeholder:text-muted-foreground
                     focus-visible:ring-indigo-500
                   "
                 />
 
               </div>
 
-    <button
-  type="submit"
-  disabled={loading}
-  className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:hover:bg-indigo-600 rounded-lg text-white flex items-center justify-center transition-colors"
->
-  {loading ? (
-    <>
-      <Loader2 size={18} className="mr-2 animate-spin" />
-      Creating account...
-    </>
-  ) : (
-    <>
-      Create Account
-      <ArrowRight size={18} className="ml-2" />
-    </>
-  )}
-</button>
-          
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:hover:bg-indigo-600 rounded-lg text-white flex items-center justify-center transition-colors"
+              >
+                {loading
+                  ? "Creating account..."
+                  : "Create Account"}
+              </button>
 
             </form>
 
             <div className="mt-8 text-center">
 
-  <span className="text-gray-400">
-    Already have an account?
-  </span>
+              <span className="text-muted-foreground">
+                Already have an account?
+              </span>
 
-  <button
-    type="button"
-    onClick={() => navigate("/login")}
-    className="ml-2 text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer"
-  >
-    Login
-  </button>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate("/login")
+                }
+                className="ml-2 text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer"
+              >
+                Login
+              </button>
 
-</div>
+            </div>
 
           </CardContent>
 
