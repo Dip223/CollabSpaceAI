@@ -7,6 +7,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import VerifyEmail from "./pages/VerifyEmail";
 import Workspace from "./pages/Workspace";
+import Notifications from "./pages/Notifications";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -65,6 +66,17 @@ function App() {
         element={
           <ProtectedRoute>
             <Workspace />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Protected Notifications */}
+
+      <Route
+        path="/notifications"
+        element={
+          <ProtectedRoute>
+            <Notifications />
           </ProtectedRoute>
         }
       />

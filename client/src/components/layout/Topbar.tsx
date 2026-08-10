@@ -1,13 +1,13 @@
-import ThemeToggle from "../ThemeToggle";
+import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Bell,
   Search,
+  X,
   LogOut,
-  Moon,
-  Sun,
 } from "lucide-react";
 
-import { useTheme } from "../theme-provider";
+import ThemeToggle from "../ThemeToggle";
 
 interface TopbarUser {
   name?: string;
@@ -17,6 +17,7 @@ interface TopbarUser {
 interface TopbarProps {
   user?: TopbarUser | null;
   onLogout?: () => void;
+  onSearchChange?: (value: string) => void;
 }
 
 const initials = (name?: string) =>
@@ -30,21 +31,21 @@ const initials = (name?: string) =>
 export default function Topbar({
   user,
   onLogout,
+  onSearchChange,
 }: TopbarProps) {
-  const { theme, setTheme } = useTheme();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
 
-  const toggleTheme = () => {
-    setTheme(
-      theme === "dark"
-        ? "light"
-        : "dark"
-    );
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchValue("");
+    onSearchChange?.("");
   };
 
   return (
-    <header className="flex items-center justify-between">
+    <header className="flex items-center justify-between px-6 lg:px-8 py-4 border-b border-border bg-card/40 shrink-0">
       <div>
-        <h1 className="text-foreground">
+        <h1 className="text-lg font-bold text-foreground tracking-tight">
           CollabSpace AI
         </h1>
       </div>
@@ -52,32 +53,51 @@ export default function Topbar({
       <div className="flex items-center gap-4 lg:gap-5">
 
         {/* Theme Toggle */}
-        <button
-          type="button"
-          onClick={toggleTheme}
-          title={
-            theme === "dark"
-              ? "Switch to light mode"
-              : "Switch to dark mode"
-          }
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {theme === "dark" ? (
-            <Sun size={19} />
-          ) : (
-            <Moon size={19} />
-          )}
-        </button>
+        <ThemeToggle />
 
         {/* Search */}
-        <button className="text-muted-foreground hover:text-foreground transition-colors hidden sm:block">
-          <Search size={19} />
-        </button>
+        {searchOpen ? (
+          <div className="hidden sm:flex items-center gap-1.5 bg-background ring-1 ring-border rounded-lg pl-3 pr-1.5 py-1.5">
+            <Search size={15} className="text-muted-foreground shrink-0" />
+            <input
+              autoFocus
+              value={searchValue}
+              onChange={(e) => {
+                setSearchValue(e.target.value);
+                onSearchChange?.(e.target.value);
+              }}
+              onKeyDown={(e) => e.key === "Escape" && closeSearch()}
+              placeholder="Search workspaces..."
+              className="bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none w-40"
+            />
+            <button
+              type="button"
+              onClick={closeSearch}
+              title="Close search"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            title="Search workspaces"
+            className="text-muted-foreground hover:text-foreground transition-colors hidden sm:block"
+          >
+            <Search size={19} />
+          </button>
+        )}
 
         {/* Notifications */}
-        <button className="text-muted-foreground hover:text-foreground transition-colors">
+        <Link
+          to="/notifications"
+          title="Notifications"
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
           <Bell size={19} />
-        </button>
+        </Link>
 
         <span className="w-px h-6 bg-border" />
 

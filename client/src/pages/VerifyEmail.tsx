@@ -7,6 +7,7 @@ import api from "../services/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
@@ -59,20 +60,21 @@ export default function VerifyEmail() {
   };
 
   return (
-    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center px-4">
+    <div className="relative min-h-screen bg-background flex items-center justify-center px-4">
+      <ThemeToggle className="absolute top-6 right-6 z-10" />
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <Card className="w-full max-w-[430px] bg-[#2b2d31] border-[#3f4147] shadow-2xl">
+        <Card className="w-full max-w-[430px] bg-card border-border shadow-2xl">
           <CardContent className="p-8">
             <ShieldCheck className="text-indigo-400 mb-5" size={36} />
 
-            <h1 className="text-3xl font-bold text-white">
+            <h1 className="text-3xl font-bold text-foreground">
               Verify your email
             </h1>
 
-            <p className="text-gray-400 mt-2">
+            <p className="text-muted-foreground mt-2">
               Enter the 6-digit code sent to your email. It expires in 10 minutes.
             </p>
 
@@ -83,7 +85,7 @@ export default function VerifyEmail() {
                 placeholder="Email address"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                className="h-12 bg-[#1e1f22] border-[#404249] text-white"
+                className="h-12 bg-background border-border text-foreground"
               />
 
               <Input
@@ -96,7 +98,7 @@ export default function VerifyEmail() {
                 onChange={(event) =>
                   setOtp(event.target.value.replace(/\D/g, ""))
                 }
-                className="h-12 bg-[#1e1f22] border-[#404249] text-white text-center tracking-[0.45em] text-lg"
+                className="h-12 bg-background border-border text-foreground text-center tracking-[0.45em] text-lg"
               />
 
               <Button
@@ -117,7 +119,7 @@ export default function VerifyEmail() {
               {resending ? "Sending OTP..." : "Resend OTP"}
             </Button>
 
-            <p className="text-center text-gray-400 mt-6">
+            <p className="text-center text-muted-foreground mt-6">
               <Link
                 to="/login"
                 className="text-indigo-400 hover:text-indigo-300"

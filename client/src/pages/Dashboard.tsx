@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus,
@@ -55,6 +55,24 @@ export default function Dashboard() {
   const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [workspaceSearch, setWorkspaceSearch] = useState("");
+
+  const createSectionRef = useRef<HTMLDivElement>(null);
+  const workspaceNameInputRef = useRef<HTMLInputElement>(null);
+  const myWorkspacesSectionRef = useRef<HTMLDivElement>(null);
+
+  const filteredWorkspaces = workspaces.filter((w) =>
+    w.name.toLowerCase().includes(workspaceSearch.trim().toLowerCase())
+  );
+
+  const handleSidebarCreateClick = () => {
+    createSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    workspaceNameInputRef.current?.focus();
+  };
+
+  const handleSidebarWorkspacesClick = () => {
+    myWorkspacesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   useEffect(() => {
     fetchData();
@@ -129,49 +147,53 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="h-screen flex justify-center items-center bg-[#1e1f22]">
+      <div className="h-screen flex justify-center items-center bg-background">
         <div className="flex flex-col items-center gap-3">
           <div className="h-10 w-10 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-          <p className="text-gray-400 text-sm">Loading your dashboard...</p>
+          <p className="text-muted-foreground text-sm">Loading your dashboard...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-[#1e1f22]">
-      <Sidebar />
+    <div className="flex h-screen bg-background">
+      <Sidebar
+        workspaceCount={workspaces.length}
+        onCreateClick={handleSidebarCreateClick}
+        onWorkspacesClick={handleSidebarWorkspacesClick}
+      />
 
       <div className="flex flex-col flex-1 min-w-0">
-        <Topbar user={user} onLogout={handleLogout} />
+        <Topbar user={user} onLogout={handleLogout} onSearchChange={setWorkspaceSearch} />
 
-        <main className="flex-1 overflow-auto bg-[#313338]">
+        <main className="flex-1 overflow-auto bg-background">
           <div className="max-w-6xl mx-auto p-6 lg:p-10">
             {/* Welcome header */}
             <div className="mb-8">
-              <h1 className="text-3xl lg:text-4xl font-bold text-white tracking-tight">
+              <h1 className="text-3xl lg:text-4xl font-bold text-foreground tracking-tight">
                 Welcome back, {user?.name?.split(" ")[0]}
               </h1>
-              <p className="mt-2 text-gray-400">
+              <p className="mt-2 text-muted-foreground">
                 AI-powered collaborative workspace — pick up where you left off.
               </p>
             </div>
 
             {/* Stat cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-              <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-5 flex items-center gap-4">
+              <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-5 flex items-center gap-4">
                 <span className="h-11 w-11 rounded-xl bg-indigo-500/15 flex items-center justify-center shrink-0">
                   <Boxes size={20} className="text-indigo-400" />
                 </span>
                 <div>
-                  <p className="text-2xl font-bold text-white leading-tight">
+                  <p className="text-2xl font-bold text-foreground leading-tight">
                     {workspaces.length}
                   </p>
-                  <p className="text-gray-500 text-xs">Workspaces</p>
+                  <p className="text-muted-foreground text-xs">Workspaces</p>
                 </div>
               </div>
 
-              <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-5 flex items-center gap-4">
+              <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-5 flex items-center gap-4">
                 <span
                   className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 ${
                     user?.isVerified ? "bg-emerald-500/15" : "bg-amber-500/15"
@@ -184,45 +206,49 @@ export default function Dashboard() {
                   )}
                 </span>
                 <div>
-                  <p className="text-2xl font-bold text-white leading-tight">
+                  <p className="text-2xl font-bold text-foreground leading-tight">
                     {user?.isVerified ? "Verified" : "Unverified"}
                   </p>
-                  <p className="text-gray-500 text-xs">Account status</p>
+                  <p className="text-muted-foreground text-xs">Account status</p>
                 </div>
               </div>
 
-              <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-5 flex items-center gap-4">
+              <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-5 flex items-center gap-4">
                 <span className="h-11 w-11 rounded-xl bg-cyan-500/15 flex items-center justify-center shrink-0">
                   <Calendar size={20} className="text-cyan-400" />
                 </span>
                 <div>
-                  <p className="text-2xl font-bold text-white leading-tight">
+                  <p className="text-2xl font-bold text-foreground leading-tight">
                     {user &&
                       new Date(user.createdAt).toLocaleDateString([], {
                         month: "short",
                         year: "numeric",
                       })}
                   </p>
-                  <p className="text-gray-500 text-xs">Member since</p>
+                  <p className="text-muted-foreground text-xs">Member since</p>
                 </div>
               </div>
             </div>
 
             {/* Create + Join */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
-              <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-6 flex flex-col">
+              <div
+                ref={createSectionRef}
+                className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-6 flex flex-col"
+              >
                 <div className="flex items-center gap-2.5 mb-1">
                   <span className="h-8 w-8 rounded-lg bg-indigo-500/15 flex items-center justify-center">
                     <Plus size={16} className="text-indigo-400" />
                   </span>
-                  <h2 className="text-white font-semibold">Create a Workspace</h2>
+                  <h2 className="text-foreground font-semibold">Create a Workspace</h2>
                 </div>
-                <p className="text-gray-500 text-sm mb-4">
+                <p className="text-muted-foreground text-sm mb-4">
                   Spin up a new space for your team to collaborate.
                 </p>
 
                 <input
-                  className="w-full rounded-xl bg-[#1e1f22] px-4 py-3 text-white text-sm outline-none ring-1 ring-transparent focus:ring-indigo-500 transition-shadow placeholder:text-gray-500"
+                  ref={workspaceNameInputRef}
+                  className="w-full rounded-xl bg-muted px-4 py-3 text-foreground text-sm outline-none ring-1 ring-transparent focus:ring-indigo-500 transition-shadow placeholder:text-muted-foreground"
                   placeholder="Workspace name"
                   value={workspaceName}
                   onChange={(e) => setWorkspaceName(e.target.value)}
@@ -239,19 +265,19 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-6 flex flex-col">
+              <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-6 flex flex-col">
                 <div className="flex items-center gap-2.5 mb-1">
                   <span className="h-8 w-8 rounded-lg bg-emerald-500/15 flex items-center justify-center">
                     <Link2 size={16} className="text-emerald-400" />
                   </span>
-                  <h2 className="text-white font-semibold">Join a Workspace</h2>
+                  <h2 className="text-foreground font-semibold">Join a Workspace</h2>
                 </div>
-                <p className="text-gray-500 text-sm mb-4">
+                <p className="text-muted-foreground text-sm mb-4">
                   Enter an invite code to join an existing team.
                 </p>
 
                 <input
-                  className="w-full rounded-xl bg-[#1e1f22] px-4 py-3 text-white text-sm outline-none ring-1 ring-transparent focus:ring-emerald-500 transition-shadow placeholder:text-gray-500"
+                  className="w-full rounded-xl bg-muted px-4 py-3 text-foreground text-sm outline-none ring-1 ring-transparent focus:ring-emerald-500 transition-shadow placeholder:text-muted-foreground"
                   placeholder="Invite code"
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
@@ -270,27 +296,39 @@ export default function Dashboard() {
             </div>
 
             {/* My Workspaces */}
-            <div className="mb-8">
+            <div ref={myWorkspacesSectionRef} className="mb-8 scroll-mt-6">
               <div className="flex items-center gap-2.5 mb-4">
                 <span className="h-8 w-8 rounded-lg bg-indigo-500/15 flex items-center justify-center">
                   <Boxes size={16} className="text-indigo-400" />
                 </span>
-                <h2 className="text-xl font-bold text-white">My Workspaces</h2>
+                <h2 className="text-xl font-bold text-foreground">My Workspaces</h2>
+                {workspaceSearch.trim() && (
+                  <span className="text-sm text-muted-foreground">
+                    {filteredWorkspaces.length} of {workspaces.length}
+                  </span>
+                )}
               </div>
 
               {workspaces.length === 0 ? (
-                <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-10 flex flex-col items-center justify-center text-center gap-2">
-                  <Boxes size={28} className="text-gray-600" />
-                  <p className="text-gray-400 text-sm">
+                <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-10 flex flex-col items-center justify-center text-center gap-2">
+                  <Boxes size={28} className="text-muted-foreground" />
+                  <p className="text-muted-foreground text-sm">
                     No workspaces yet — create one or join with an invite code.
+                  </p>
+                </div>
+              ) : filteredWorkspaces.length === 0 ? (
+                <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-10 flex flex-col items-center justify-center text-center gap-2">
+                  <Boxes size={28} className="text-muted-foreground" />
+                  <p className="text-muted-foreground text-sm">
+                    No workspaces match "{workspaceSearch}".
                   </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {workspaces.map((workspace) => (
+                  {filteredWorkspaces.map((workspace) => (
                     <div
                       key={workspace.id}
-                      className="group bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 hover:ring-indigo-500/40 shadow-lg shadow-black/10 hover:shadow-xl transition-all p-5 flex flex-col"
+                      className="group bg-card rounded-2xl ring-1 ring-border hover:ring-indigo-500/40 shadow-lg shadow-black/10 hover:shadow-xl transition-all p-5 flex flex-col"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <span className="h-11 w-11 rounded-xl bg-indigo-500/15 flex items-center justify-center shrink-0">
@@ -303,7 +341,7 @@ export default function Dashboard() {
                         )}
                       </div>
 
-                      <h3 className="mt-3.5 text-white font-semibold text-lg truncate">
+                      <h3 className="mt-3.5 text-foreground font-semibold text-lg truncate">
                         {workspace.name}
                       </h3>
 
@@ -311,7 +349,7 @@ export default function Dashboard() {
                         onClick={() =>
                           handleCopyInvite(workspace.inviteCode, workspace.id)
                         }
-                        className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-300 w-fit"
+                        className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground w-fit"
                       >
                         <span className="font-mono text-indigo-400">
                           {workspace.inviteCode}
@@ -340,12 +378,12 @@ export default function Dashboard() {
             </div>
 
             {/* Profile */}
-            <div className="bg-[#2b2d31] rounded-2xl ring-1 ring-white/5 shadow-lg shadow-black/10 p-6 max-w-xl mb-6">
+            <div className="bg-card rounded-2xl ring-1 ring-border shadow-lg shadow-black/10 p-6 max-w-xl mb-6">
               <div className="flex items-center gap-2.5 mb-5">
                 <span className="h-8 w-8 rounded-lg bg-indigo-500/15 flex items-center justify-center">
                   <UserRound size={16} className="text-indigo-400" />
                 </span>
-                <h2 className="text-white font-semibold text-lg">Profile</h2>
+                <h2 className="text-foreground font-semibold text-lg">Profile</h2>
               </div>
 
               <div className="flex items-center gap-4">
@@ -353,14 +391,14 @@ export default function Dashboard() {
                   {initials(user?.name)}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-white font-semibold truncate">{user?.name}</p>
-                  <p className="text-gray-500 text-sm truncate">{user?.email}</p>
+                  <p className="text-foreground font-semibold truncate">{user?.name}</p>
+                  <p className="text-muted-foreground text-sm truncate">{user?.email}</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 mt-5 pt-5 border-t border-white/5">
+              <div className="grid grid-cols-2 gap-4 mt-5 pt-5 border-t border-border">
                 <div>
-                  <p className="text-gray-500 text-xs mb-1">Status</p>
+                  <p className="text-muted-foreground text-xs mb-1">Status</p>
                   <p
                     className={`text-sm font-medium flex items-center gap-1.5 ${
                       user?.isVerified ? "text-emerald-400" : "text-amber-400"
@@ -375,8 +413,8 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-gray-500 text-xs mb-1">Joined</p>
-                  <p className="text-white text-sm font-medium">
+                  <p className="text-muted-foreground text-xs mb-1">Joined</p>
+                  <p className="text-foreground text-sm font-medium">
                     {user &&
                       new Date(user.createdAt).toLocaleDateString([], {
                         month: "long",

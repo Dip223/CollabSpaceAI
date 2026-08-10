@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 
 import { Input } from "@/components/ui/input";
+import ThemeToggle from "@/components/ThemeToggle";
 
 import api from "../services/api";
 
@@ -107,6 +108,8 @@ export default function Register() {
 
   return (
     <div className="relative min-h-screen bg-background text-foreground flex items-center justify-center">
+
+      <ThemeToggle className="absolute top-6 right-6 z-10" />
 
       {/* Background */}
       <div className="absolute inset-0 pointer-events-none">

@@ -13,6 +13,7 @@ import {
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import ThemeToggle from "@/components/ThemeToggle";
 
 import { useState } from "react";
 import api from "../services/api";
@@ -128,6 +129,8 @@ export default function Login() {
 
   return (
     <div className="relative min-h-screen bg-background text-foreground flex items-center justify-center">
+
+      <ThemeToggle className="absolute top-6 right-6 z-10" />
 
       {/* Existing background effects */}
       <div className="absolute w-96 h-96 bg-cyan-500 rounded-full blur-[150px] opacity-20 bottom-0 right-0" />
