@@ -8,6 +8,7 @@ import api from "../services/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function ResetPassword() {
   const { token } = useParams();
@@ -60,7 +61,9 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-[#1e1f22] flex items-center justify-center px-4">
+    <div className="relative min-h-screen bg-background flex items-center justify-center px-4">
+
+      <ThemeToggle className="absolute top-6 right-6 z-10" />
 
       <motion.div
         initial={{ opacity: 0, y: 25 }}
@@ -68,15 +71,15 @@ export default function ResetPassword() {
         className="w-full max-w-[430px]"
       >
 
-        <Card className="w-full bg-[#2b2d31] border-[#3f4147]">
+        <Card className="w-full bg-card border-border">
 
           <CardContent className="p-8">
 
-            <h1 className="text-3xl text-white font-bold">
+            <h1 className="text-3xl text-foreground font-bold">
               Reset Password
             </h1>
 
-            <p className="text-gray-400 mt-2">
+            <p className="text-muted-foreground mt-2">
               Enter your new password.
             </p>
 
@@ -85,14 +88,14 @@ export default function ResetPassword() {
               <div className="relative">
 
                 <Lock
-                  className="absolute left-3 top-3 text-gray-400"
+                  className="absolute left-3 top-3 text-muted-foreground"
                   size={18}
                 />
 
                 <Input
                   type="password"
                   placeholder="New Password"
-                  className="pl-10 bg-[#1e1f22] border-[#404249] text-white"
+                  className="pl-10 bg-background border-border text-foreground"
                   value={password}
                   onChange={(e) =>
                     setPassword(e.target.value)
@@ -104,14 +107,14 @@ export default function ResetPassword() {
               <div className="relative">
 
                 <Lock
-                  className="absolute left-3 top-3 text-gray-400"
+                  className="absolute left-3 top-3 text-muted-foreground"
                   size={18}
                 />
 
                 <Input
                   type="password"
                   placeholder="Confirm Password"
-                  className="pl-10 bg-[#1e1f22] border-[#404249] text-white"
+                  className="pl-10 bg-background border-border text-foreground"
                   value={confirmPassword}
                   onChange={(e) =>
                     setConfirmPassword(
