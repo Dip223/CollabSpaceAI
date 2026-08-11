@@ -47,12 +47,32 @@ const leaveWorkspace = (socket: AuthedSocket, workspaceId: number) => {
   }
 };
 
-export const initSocket = (server: http.Server) => {
+export const initSocket = (server: http.Server, allowedOrigins?: Set<string>) => {
   io = new SocketIOServer(server, {
     cors: {
-      origin: process.env.CLIENT_URL || "http://localhost:5173",
+      // Mirrors the Express REST CORS check in index.ts instead of only
+      // allowing a single hardcoded CLIENT_URL. With just one allowed
+      // origin, the WebSocket handshake from any teammate whose deployed
+      // frontend URL didn't match byte-for-byte (a preview URL, a slightly
+      // different domain, CLIENT_URL not set on this particular Render
+      // deploy, etc.) got silently rejected — which looked exactly like
+      // "cursors don't work across devices" even though it was really a
+      // failed/degraded socket connection.
+      origin: (origin, callback) => {
+        if (!origin || !allowedOrigins || allowedOrigins.has(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error("Not allowed by CORS"));
+      },
       credentials: true,
     },
+    // Mobile data / public wifi round-trips are far slower and jitterier
+    // than the default 20s pingTimeout assumes — a couple of slow pongs in
+    // a row was enough to make Socket.IO decide the connection was dead and
+    // force a reconnect, dropping whatever note-update/note-cursor events
+    // were in flight at that moment.
+    pingTimeout: 30000,
+    pingInterval: 25000,
   });
 
   // ================= AUTH =================
@@ -126,10 +146,20 @@ export const initSocket = (server: http.Server) => {
 
     socket.on(
       "note-update",
-      (data: { workspaceId: number; content: string; updatedBy: string }) => {
+      (data: {
+        workspaceId: number;
+        content: string;
+        updatedBy: string;
+        cursorOffset?: number;
+      }) => {
+        // cursorOffset rides along with the content it was measured
+        // against, so the client can apply both atomically instead of
+        // waiting on a separate note-cursor event that could arrive out of
+        // order relative to this one under real network latency.
         socket.to(roomName(data.workspaceId)).emit("note-update", {
           content: data.content,
           updatedBy: data.updatedBy,
+          cursorOffset: data.cursorOffset,
         });
       }
     );

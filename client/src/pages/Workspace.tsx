@@ -320,6 +320,51 @@ const getRangeFromOffset = (root: Node, target: number): Range | null => {
   return range;
 };
 
+// Collapsed ranges positioned exactly at a text-node boundary (start/end of
+// a line, an empty node, right after a <br>, etc.) frequently report an
+// empty ClientRects list in Chrome — that's what made remote typers' name
+// labels flicker in and out instead of tracking them reliably. Widen the
+// range by one character (forward, then backward as a fallback) before
+// measuring so we always get a real, non-empty rect to position from.
+const measureCaretRect = (root: Node, target: number): DOMRect | null => {
+  const collapsed = getRangeFromOffset(root, target);
+  const isUsable = (r: Range) => r.getClientRects().length > 0;
+
+  if (isUsable(collapsed)) {
+    return collapsed.getClientRects()[0];
+  }
+
+  try {
+    const forward = collapsed.cloneRange();
+    const endLen = forward.endContainer.textContent?.length ?? forward.endOffset;
+    forward.setEnd(forward.endContainer, Math.min(endLen, forward.endOffset + 1));
+    if (isUsable(forward)) return forward.getClientRects()[0];
+  } catch {
+    // fall through to the backward attempt below
+  }
+
+  if (target > 0) {
+    try {
+      const backward = getRangeFromOffset(root, target - 1);
+      backward.setEnd(collapsed.startContainer, collapsed.startOffset);
+      if (isUsable(backward)) {
+        const rects = backward.getClientRects();
+        return rects[rects.length - 1];
+      }
+    } catch {
+      // fall through to the final fallback below
+    }
+  }
+
+  // Last resort — a zeroed-out rect means "nowhere sensible to draw this",
+  // so treat it as no rect rather than pinning the label to the corner.
+  const fallback = collapsed.getBoundingClientRect();
+  if (fallback.width === 0 && fallback.height === 0 && fallback.top === 0 && fallback.left === 0) {
+    return null;
+  }
+  return fallback;
+};
+
 const CURSOR_COLORS = [
   "#f43f5e",
   "#6366f1",
@@ -563,7 +608,7 @@ const walkForPdf = (
   }
 
   if (el.tagName === "LI") {
-    const bullet = listContext?.ordered ? `${listContext.index}. ` : "\u2022  ";
+    const bullet = listContext?.ordered ? `${listContext.index}. ` : "•  ";
     tokens.push({ text: bullet, ...resolveRunStyle(el, root) });
     el.childNodes.forEach((child) => walkForPdf(child, root, tokens));
     tokens.push({ break: true });
@@ -746,11 +791,31 @@ export default function Workspace() {
 
     socket.on(
       "note-update",
-      (data: { content: string; updatedBy: string }) => {
+      (data: { content: string; updatedBy: string; cursorOffset?: number }) => {
         // Only overwrite the DOM if this user isn't actively typing —
         // otherwise an incoming update would reset their cursor position.
         if (!isEditorFocused.current && editorRef.current) {
           editorRef.current.innerHTML = data.content;
+        }
+
+        // The sender's caret offset rides along in this SAME message as the
+        // content it was measured against, so applying it here is atomic —
+        // no separate "note-cursor" event that could arrive before/after
+        // this one and get interpreted against mismatched content. That
+        // ordering race barely showed up on localhost (near-zero latency),
+        // but became the norm across real devices/networks with real RTT,
+        // which is why cursor names looked fine on one machine and broken
+        // across two different devices/networks.
+        if (
+          data.updatedBy &&
+          data.updatedBy !== user.name &&
+          typeof data.cursorOffset === "number"
+        ) {
+          remoteCursors.current.set(data.updatedBy, {
+            offset: data.cursorOffset,
+            updatedAt: Date.now(),
+            color: cursorColorFor(data.updatedBy),
+          });
         }
 
         // Content changed, so every remembered cursor offset now points at
@@ -791,7 +856,9 @@ export default function Workspace() {
     );
 
     // Prunes cursors for members who went inactive/disconnected without a
-    // fresh event arriving to trigger a redraw (e.g. a closed tab).
+    // fresh event arriving to trigger a redraw (e.g. a closed tab). Kept a
+    // little longer than the old 6s so a slow mobile-data round trip
+    // doesn't make a name blink away between two real keystrokes.
     const cursorPruneInterval = setInterval(renderCursorOverlay, 2000);
 
     return () => {
@@ -889,7 +956,7 @@ export default function Workspace() {
 
     const now = Date.now();
     remoteCursors.current.forEach((entry, name) => {
-      if (now - entry.updatedAt > 6000) remoteCursors.current.delete(name);
+      if (now - entry.updatedAt > 8000) remoteCursors.current.delete(name);
     });
 
     const editorRect = editor.getBoundingClientRect();
@@ -901,11 +968,9 @@ export default function Workspace() {
     });
 
     remoteCursors.current.forEach((entry, name) => {
-      const range = getRangeFromOffset(editor, entry.offset);
-      if (!range) return;
-
-      const rects = range.getClientRects();
-      const rect = rects[0] || range.getBoundingClientRect();
+      const rect = measureCaretRect(editor, entry.offset);
+      // No reliable rect this cycle (rare) — keep whatever position/
+      // visibility the label already had rather than flicker it away.
       if (!rect) return;
 
       const top = rect.top - editorRect.top;
@@ -992,10 +1057,16 @@ export default function Workspace() {
     const html = editorRef.current?.innerHTML || "";
 
     // Live-broadcast every keystroke so other members see it as you type.
+    // The caret offset is bundled into this SAME event (rather than relying
+    // solely on the separate "note-cursor" broadcast below) so a receiver
+    // never has to pair this content with a cursor position that arrived in
+    // a different message — see the note-update handler above for why that
+    // pairing matters once real network latency/jitter is involved.
     socket.emit("note-update", {
       workspaceId,
       content: html,
       updatedBy: currentUser().name,
+      cursorOffset: getCurrentCaretOffset(),
     });
 
     // Persist to the database on a short debounce rather than on every

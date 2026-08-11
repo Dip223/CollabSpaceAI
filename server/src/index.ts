@@ -58,7 +58,12 @@ app.get("/", (_req, res) => {
 
 const server = http.createServer(app);
 
-initSocket(server);
+// Same allowlist as the Express CORS check above — Socket.IO used to have
+// its own hardcoded single-origin check here, which would silently reject
+// the WebSocket handshake from any teammate whose deployed frontend origin
+// didn't exactly match CLIENT_URL, even though the ordinary REST calls
+// right above worked fine because they went through the flexible allowlist.
+initSocket(server, allowedOrigins);
 
 const PORT = Number(process.env.PORT) || 5000;
 
