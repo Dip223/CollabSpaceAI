@@ -300,7 +300,7 @@ const getTextOffset = (root: Node, node: Node, offset: number): number => {
   return total;
 };
 
-const getRangeFromOffset = (root: Node, target: number): Range | null => {
+const getRangeFromOffset = (root: Node, target: number): Range => {
   let total = 0;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let current: Node | null;
