@@ -4,6 +4,8 @@ import jwt from "jsonwebtoken";
 
 interface AuthedSocket extends Socket {
   userId?: number;
+  workspaceId?: number;
+  userName?: string;
 }
 
 interface PresenceEntry {
@@ -22,7 +24,7 @@ const broadcastPresence = (workspaceId: number) => {
   const roomPresence = presence.get(workspaceId);
   if (!roomPresence) return;
 
-  // De-dupe by userId (same user could have multiple tabs/sockets open)
+  // Same user can have multiple tabs, but show them once in member list.
   const uniqueUsers = new Map<number, PresenceEntry>();
   roomPresence.forEach((entry) => uniqueUsers.set(entry.userId, entry));
 
@@ -32,7 +34,16 @@ const broadcastPresence = (workspaceId: number) => {
   );
 };
 
-const leaveWorkspace = (socket: AuthedSocket, workspaceId: number) => {
+const leaveWorkspace = (
+  socket: AuthedSocket,
+  workspaceId: number
+) => {
+  // Remove the leaving user's cursor immediately on teammates' screens.
+  socket.to(roomName(workspaceId)).emit("note-cursor-left", {
+    socketId: socket.id,
+    name: socket.userName,
+  });
+
   socket.leave(roomName(workspaceId));
 
   const roomPresence = presence.get(workspaceId);
@@ -47,36 +58,34 @@ const leaveWorkspace = (socket: AuthedSocket, workspaceId: number) => {
   }
 };
 
-export const initSocket = (server: http.Server, allowedOrigins?: Set<string>) => {
+export const initSocket = (
+  server: http.Server,
+  allowedOrigins?: Set<string>
+) => {
   io = new SocketIOServer(server, {
     cors: {
-      // Mirrors the Express REST CORS check in index.ts instead of only
-      // allowing a single hardcoded CLIENT_URL. With just one allowed
-      // origin, the WebSocket handshake from any teammate whose deployed
-      // frontend URL didn't match byte-for-byte (a preview URL, a slightly
-      // different domain, CLIENT_URL not set on this particular Render
-      // deploy, etc.) got silently rejected — which looked exactly like
-      // "cursors don't work across devices" even though it was really a
-      // failed/degraded socket connection.
       origin: (origin, callback) => {
+        // Allows local development, Render, Vercel production,
+        // and any URLs explicitly included in CLIENT_URLS.
         if (!origin || !allowedOrigins || allowedOrigins.has(origin)) {
           return callback(null, true);
         }
+
         return callback(new Error("Not allowed by CORS"));
       },
       credentials: true,
     },
-    // Mobile data / public wifi round-trips are far slower and jitterier
-    // than the default 20s pingTimeout assumes — a couple of slow pongs in
-    // a row was enough to make Socket.IO decide the connection was dead and
-    // force a reconnect, dropping whatever note-update/note-cursor events
-    // were in flight at that moment.
+
+    // Allows rich note HTML including a reasonably sized inserted image.
+    maxHttpBufferSize: 5 * 1024 * 1024,
+
+    // More stable on slow Wi-Fi/mobile networks.
     pingTimeout: 30000,
     pingInterval: 25000,
   });
 
-  // ================= AUTH =================
-  // Every socket connection must carry the same JWT used for REST calls.
+  // ================= JWT AUTH =================
+
   io.use((socket: AuthedSocket, next) => {
     try {
       const token = socket.handshake.auth?.token as string | undefined;
@@ -98,12 +107,29 @@ export const initSocket = (server: http.Server, allowedOrigins?: Set<string>) =>
   });
 
   io.on("connection", (socket: AuthedSocket) => {
-    // ================= JOIN / LEAVE =================
+    // ================= JOIN / LEAVE WORKSPACE =================
 
     socket.on(
       "join-workspace",
       (payload: { workspaceId: number; name: string }) => {
-        const { workspaceId, name } = payload;
+        const workspaceId = Number(payload.workspaceId);
+
+        if (!Number.isInteger(workspaceId) || workspaceId <= 0) {
+          return;
+        }
+
+        // If this browser tab changes workspace, leave the old room first.
+        if (
+          socket.workspaceId &&
+          socket.workspaceId !== workspaceId
+        ) {
+          leaveWorkspace(socket, socket.workspaceId);
+        }
+
+        socket.workspaceId = workspaceId;
+        socket.userName = String(payload.name || "Member")
+          .trim()
+          .slice(0, 80) || "Member";
 
         socket.join(roomName(workspaceId));
 
@@ -113,7 +139,7 @@ export const initSocket = (server: http.Server, allowedOrigins?: Set<string>) =>
 
         presence.get(workspaceId)!.set(socket.id, {
           userId: socket.userId!,
-          name,
+          name: socket.userName,
         });
 
         broadcastPresence(workspaceId);
@@ -121,58 +147,87 @@ export const initSocket = (server: http.Server, allowedOrigins?: Set<string>) =>
     );
 
     socket.on("leave-workspace", (workspaceId: number) => {
-      leaveWorkspace(socket, workspaceId);
+      if (workspaceId === socket.workspaceId) {
+        leaveWorkspace(socket, workspaceId);
+        socket.workspaceId = undefined;
+      }
     });
 
     // ================= CHAT =================
 
     socket.on("send-message", (data: { serverId: number }) => {
+      if (data.serverId !== socket.workspaceId) return;
+
+      // Keep io.to, because your frontend already deduplicates the sender's
+      // saved message and this preserves existing chat behavior.
       io.to(roomName(data.serverId)).emit("receive-message", data);
     });
 
     socket.on(
       "typing",
       (data: { workspaceId: number; user: string }) => {
-        // socket.to (not io.to) so the typer doesn't see their own indicator
+        if (data.workspaceId !== socket.workspaceId) return;
+
         socket.to(roomName(data.workspaceId)).emit("typing", {
-          user: data.user,
+          user: socket.userName || "Member",
         });
       }
     );
 
-    // ================= SHARED NOTEPAD =================
-    // Persistence goes through the REST /api/note endpoint (debounced on the
-    // client); this just relays live keystrokes to everyone else in the room.
+    // ================= RICH SHARED DOCUMENT =================
+    // Database save is handled by your existing /api/note endpoint.
+    // These events only send immediate live updates to teammates.
 
     socket.on(
       "note-update",
       (data: {
         workspaceId: number;
         content: string;
-        updatedBy: string;
         cursorOffset?: number;
       }) => {
-        // cursorOffset rides along with the content it was measured
-        // against, so the client can apply both atomically instead of
-        // waiting on a separate note-cursor event that could arrive out of
-        // order relative to this one under real network latency.
+        if (
+          data.workspaceId !== socket.workspaceId ||
+          typeof data.content !== "string" ||
+          data.content.length > 4_000_000
+        ) {
+          return;
+        }
+
         socket.to(roomName(data.workspaceId)).emit("note-update", {
           content: data.content,
-          updatedBy: data.updatedBy,
-          cursorOffset: data.cursorOffset,
+
+          // Never trust a name sent from the browser.
+          updatedBy: socket.userName || "Member",
+          socketId: socket.id,
+
+          // Cursor position belongs to this exact content update.
+          cursorOffset:
+            typeof data.cursorOffset === "number" &&
+            Number.isInteger(data.cursorOffset) &&
+            data.cursorOffset >= 0
+              ? data.cursorOffset
+              : undefined,
         });
       }
     );
 
-    // ================= LIVE CURSORS =================
-    // Purely ephemeral presence data (like Google Docs' colored cursor labels)
-    // — never persisted, just relayed to everyone else in the room.
+    // ================= LIVE USER CURSORS =================
 
     socket.on(
       "note-cursor",
-      (data: { workspaceId: number; name: string; offset: number }) => {
+      (data: { workspaceId: number; offset: number }) => {
+        if (
+          data.workspaceId !== socket.workspaceId ||
+          !Number.isInteger(data.offset) ||
+          data.offset < 0 ||
+          data.offset > 4_000_000
+        ) {
+          return;
+        }
+
         socket.to(roomName(data.workspaceId)).emit("note-cursor", {
-          name: data.name,
+          socketId: socket.id,
+          name: socket.userName || "Member",
           offset: data.offset,
         });
       }
@@ -181,12 +236,13 @@ export const initSocket = (server: http.Server, allowedOrigins?: Set<string>) =>
     // ================= DISCONNECT =================
 
     socket.on("disconnect", () => {
-      presence.forEach((_, workspaceId) => {
-        leaveWorkspace(socket, workspaceId);
-      });
+      if (socket.workspaceId) {
+        leaveWorkspace(socket, socket.workspaceId);
+        socket.workspaceId = undefined;
+      }
     });
   });
 };
 
-// Lets controllers (e.g. fileController) emit events to a workspace room
+// Lets controllers such as fileController emit to a workspace.
 export const getIO = () => io;

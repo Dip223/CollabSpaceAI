@@ -133,7 +133,7 @@ const FONT_OPTIONS = [
 ];
 
 // ================= SHAPE INSERTION =================
-// Shapes are inserted as plain styled <span> elements (not SVG) — that
+// Shapes are inserted as plain styled <span> elements (not SVG) â€” that
 // keeps them simple to build with execCommand("insertHTML"), and plain
 // bordered/colored boxes are what a Word-compatible HTML export renders
 // most reliably. "currentColor" is used everywhere so a shape's outline
@@ -148,7 +148,7 @@ type ShapeDef = {
 // Every inserted shape carries resize:both (or resize:horizontal for lines,
 // since length is the meaningful dimension there) plus overflow:hidden,
 // which is what makes the browser draw a native drag handle in the
-// bottom-right corner — no custom drag/mouse-tracking JS needed. Note this
+// bottom-right corner â€” no custom drag/mouse-tracking JS needed. Note this
 // is why triangle uses clip-path instead of the classic zero-size
 // border-trick: a 0x0 box has nothing for a resize handle to resize.
 const SHAPE_DEFS: ShapeDef[] = [
@@ -284,7 +284,7 @@ const safeFileName = (name: string) =>
 
 // ================= LIVE CURSOR POSITIONING =================
 // Cursor positions are communicated as a plain character offset into the
-// editor's text content, rather than raw screen coordinates — screen
+// editor's text content, rather than raw screen coordinates â€” screen
 // coordinates aren't portable between different users' viewports/scroll
 // positions, but a text offset can be turned back into a real DOM Range
 // (and then a screen position) locally on each client.
@@ -322,7 +322,7 @@ const getRangeFromOffset = (root: Node, target: number): Range => {
 
 // Collapsed ranges positioned exactly at a text-node boundary (start/end of
 // a line, an empty node, right after a <br>, etc.) frequently report an
-// empty ClientRects list in Chrome — that's what made remote typers' name
+// empty ClientRects list in Chrome â€” that's what made remote typers' name
 // labels flicker in and out instead of tracking them reliably. Widen the
 // range by one character (forward, then backward as a fallback) before
 // measuring so we always get a real, non-empty rect to position from.
@@ -356,7 +356,7 @@ const measureCaretRect = (root: Node, target: number): DOMRect | null => {
     }
   }
 
-  // Last resort — a zeroed-out rect means "nowhere sensible to draw this",
+  // Last resort â€” a zeroed-out rect means "nowhere sensible to draw this",
   // so treat it as no rect rather than pinning the label to the corner.
   const fallback = collapsed.getBoundingClientRect();
   if (fallback.width === 0 && fallback.height === 0 && fallback.top === 0 && fallback.left === 0) {
@@ -385,7 +385,7 @@ const cursorColorFor = (name: string) => {
 };
 
 // ================= PDF EXPORT STYLE RESOLUTION =================
-// jsPDF only ships helvetica/times/courier — map our toolbar's web fonts to
+// jsPDF only ships helvetica/times/courier â€” map our toolbar's web fonts to
 // the closest built-in equivalent (embedding real font files is far more
 // involved and out of scope here).
 
@@ -438,7 +438,7 @@ const parseRgb = (css: string): [number, number, number] | null => {
 };
 
 // execCommand("foreColor") sets an explicit inline color (or a legacy
-// <font color> tag) on the exact node the user selected — walk up from the
+// <font color> tag) on the exact node the user selected â€” walk up from the
 // text node looking for that, stopping at the editor root. We deliberately
 // don't use getComputedStyle for color: the editor's own container is styled
 // with a theme-aware text color, and getComputedStyle would resolve that
@@ -470,7 +470,7 @@ const resolveRunStyle = (el: Element, root: Element): Omit<TextRun, "text"> => {
   const pxSize = parseFloat(cs.fontSize) || 16;
   const size = Math.max(8, Math.min(36, Math.round(pxSize * 0.75)));
   // text-align is inherited, so reading it off any descendant already
-  // resolves to whatever block ancestor actually set it — no need to walk
+  // resolves to whatever block ancestor actually set it â€” no need to walk
   // up the tree ourselves.
   const align: Align =
     cs.textAlign === "center"
@@ -499,7 +499,7 @@ const hexToRgb = (hex: string): [number, number, number] | null => {
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
 };
 
-// Only data-URL images can be embedded without an extra async fetch — that
+// Only data-URL images can be embedded without an extra async fetch â€” that
 // covers everything our own toolbar inserts (local file picker, and shared
 // files pulled from the workspace). An external http(s) <img src> would
 // need a network round-trip mid-layout, so those are left out.
@@ -586,7 +586,7 @@ const walkForPdf = (
   }
 
   // Tables are read directly via the table DOM APIs rather than recursed
-  // into token-by-token — that gives a clean per-cell grid straight away,
+  // into token-by-token â€” that gives a clean per-cell grid straight away,
   // including each column's real rendered width (so a manually resized
   // column carries over into the PDF too). Only plain cell text is kept;
   // rich formatting inside a cell isn't preserved in the PDF.
@@ -608,7 +608,7 @@ const walkForPdf = (
   }
 
   if (el.tagName === "LI") {
-    const bullet = listContext?.ordered ? `${listContext.index}. ` : "•  ";
+    const bullet = listContext?.ordered ? `${listContext.index}. ` : "â€¢  ";
     tokens.push({ text: bullet, ...resolveRunStyle(el, root) });
     el.childNodes.forEach((child) => walkForPdf(child, root, tokens));
     tokens.push({ break: true });
@@ -716,7 +716,7 @@ export default function Workspace() {
     const user = currentUser();
 
     // Re-joins on first connect AND on every automatic reconnection
-    // (network blip, backend restart, etc.) — without this, a dropped
+    // (network blip, backend restart, etc.) â€” without this, a dropped
     // connection would silently stop showing you as online/typing to
     // everyone else until a manual page refresh.
     const handleConnect = () => {
@@ -784,7 +784,8 @@ export default function Workspace() {
     socket.on(
       "file-deleted",
       (data: { fileId: number; fileName: string; deletedBy: string }) => {
-        setFiles((prev) => prev.filter((f) => f.id !== data.fileId));
+      
+  setFiles((prev) => prev.filter((f) => f.id !== data.fileId));
         pushActivity(`${data.deletedBy} deleted ${data.fileName}`);
       }
     );
@@ -792,14 +793,28 @@ export default function Workspace() {
     socket.on(
       "note-update",
       (data: { content: string; updatedBy: string; cursorOffset?: number }) => {
-        // Only overwrite the DOM if this user isn't actively typing —
-        // otherwise an incoming update would reset their cursor position.
-        if (!isEditorFocused.current && editorRef.current) {
+        // This is a remote Socket.IO event (the server does not echo it to
+        // its sender), so apply it even while this editor has focus. Keeping
+        // the old code here made two active teammates never see each other.
+        if (editorRef.current && editorRef.current.innerHTML !== data.content) {
+          const localOffset = isEditorFocused.current
+            ? getCurrentCaretOffset()
+            : null;
+
           editorRef.current.innerHTML = data.content;
+
+          // Keep this user's selection near its old location after a remote
+          // change, instead of sending their caret back to the document start.
+          if (localOffset !== null) {
+            const range = getRangeFromOffset(editorRef.current, localOffset);
+            const selection = window.getSelection();
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+          }
         }
 
         // The sender's caret offset rides along in this SAME message as the
-        // content it was measured against, so applying it here is atomic —
+        // content it was measured against, so applying it here is atomic â€”
         // no separate "note-cursor" event that could arrive before/after
         // this one and get interpreted against mismatched content. That
         // ordering race barely showed up on localhost (near-zero latency),
@@ -819,7 +834,7 @@ export default function Workspace() {
         }
 
         // Content changed, so every remembered cursor offset now points at
-        // a possibly-different DOM position — recompute where they land.
+        // a possibly-different DOM position â€” recompute where they land.
         renderCursorOverlay();
 
         if (!data.updatedBy || data.updatedBy === user.name) return;
@@ -855,6 +870,15 @@ export default function Workspace() {
       }
     );
 
+    socket.on(
+      "note-cursor-left",
+      (data: { name?: string }) => {
+        if (!data.name) return;
+        remoteCursors.current.delete(data.name);
+        renderCursorOverlay();
+      }
+    );
+
     // Prunes cursors for members who went inactive/disconnected without a
     // fresh event arriving to trigger a redraw (e.g. a closed tab). Kept a
     // little longer than the old 6s so a slow mobile-data round trip
@@ -874,6 +898,7 @@ export default function Workspace() {
       socket.off("file-deleted");
       socket.off("note-update");
       socket.off("note-cursor");
+      socket.off("note-cursor-left");
 
       typingTimeouts.current.forEach((t) => clearTimeout(t));
       typingTimeouts.current.clear();
@@ -947,7 +972,7 @@ export default function Workspace() {
 
   // Redraws every remote user's colored cursor + name label at their last
   // known text offset, translated to a live screen position. Cheap enough to
-  // call on every keystroke/scroll/cursor event — it's plain DOM writes, not
+  // call on every keystroke/scroll/cursor event â€” it's plain DOM writes, not
   // a React re-render.
   const renderCursorOverlay = () => {
     const layer = cursorLayerRef.current;
@@ -969,7 +994,7 @@ export default function Workspace() {
 
     remoteCursors.current.forEach((entry, name) => {
       const rect = measureCaretRect(editor, entry.offset);
-      // No reliable rect this cycle (rare) — keep whatever position/
+      // No reliable rect this cycle (rare) â€” keep whatever position/
       // visibility the label already had rather than flicker it away.
       if (!rect) return;
 
@@ -1060,7 +1085,7 @@ export default function Workspace() {
     // The caret offset is bundled into this SAME event (rather than relying
     // solely on the separate "note-cursor" broadcast below) so a receiver
     // never has to pair this content with a cursor position that arrived in
-    // a different message — see the note-update handler above for why that
+    // a different message â€” see the note-update handler above for why that
     // pairing matters once real network latency/jitter is involved.
     socket.emit("note-update", {
       workspaceId,
@@ -1105,7 +1130,7 @@ export default function Workspace() {
     // resize:both on each cell gives a native drag handle in that cell's
     // corner. Because HTML tables share one width per column and one
     // height per row, dragging any single cell resizes its whole
-    // row/column — no custom column/row-divider dragging code needed.
+    // row/column â€” no custom column/row-divider dragging code needed.
     const cellStyle =
       "border:1px solid currentColor;padding:6px 10px;min-width:40px;min-height:24px;resize:both;overflow:hidden;";
 
@@ -1125,7 +1150,7 @@ export default function Workspace() {
 
   const insertShape = (shape: ShapeDef) => {
     const css = styleToCss(shape.insertStyle);
-    // contenteditable="false" makes the shape act as a single atomic unit —
+    // contenteditable="false" makes the shape act as a single atomic unit â€”
     // the cursor steps around it rather than landing inside an empty box.
     // data-shape is what lets PDF export recognize this element and know
     // which primitive to draw, without trying to reverse-engineer it from
@@ -1135,7 +1160,7 @@ export default function Workspace() {
     setOpenMenu(null);
   };
 
-  // Images are embedded as base64 data URLs directly in the note's HTML —
+  // Images are embedded as base64 data URLs directly in the note's HTML â€”
   // simple and works with the existing save/broadcast pipeline with no
   // backend changes, but it does bloat the document for large images.
   // Prefer the "Shared Files" panel for anything sizeable.
@@ -1175,7 +1200,7 @@ export default function Workspace() {
     let y = marginY;
     let lineHeight = BASE_LINE_HEIGHT;
 
-    // Alignment can't be decided word-by-word as we draw — we only know
+    // Alignment can't be decided word-by-word as we draw â€” we only know
     // where a line should *start* once we know how wide the whole line is.
     // So instead of drawing immediately (like the old left-only version
     // did), each line is buffered here and only drawn once it's complete
@@ -1286,14 +1311,14 @@ export default function Workspace() {
         doc.addImage(token.image, token.format, x, y, w, h);
         y += h + 10;
       } catch (err) {
-        // A format jsPDF can't handle in this browser — skip just this
+        // A format jsPDF can't handle in this browser â€” skip just this
         // image rather than aborting the whole export.
         console.log("Couldn't embed image in PDF export", err);
       }
     };
 
     // Shapes map onto jsPDF's native drawing primitives (rect/circle/
-    // ellipse/triangle/line) — everything is wrapped in one try/catch so
+    // ellipse/triangle/line) â€” everything is wrapped in one try/catch so
     // an unsupported method in a particular browser skips just that shape
     // rather than aborting the whole export.
     const drawShape = (token: ShapeRun) => {
@@ -1342,7 +1367,7 @@ export default function Workspace() {
             doc.triangle(x + w / 2, y, x, y + h, x + w, y + h, "F");
             break;
           case "diamond": {
-            // Two triangles meeting at the midline — avoids relying on a
+            // Two triangles meeting at the midline â€” avoids relying on a
             // less-common multi-point polygon API for a simple shape.
             const cx = x + w / 2;
             const cy = y + h / 2;
@@ -1485,10 +1510,11 @@ export default function Workspace() {
     const html = `<!DOCTYPE html>
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"><title>${workspace?.name || "Document"}</title></head>
-      <body>${el.innerHTML || ""}</body>
+      <body>${el.innerHTML ||
+ ""}</body>
       </html>`;
 
-    const blob = new Blob(["﻿", html], { type: "application/msword" });
+    const blob = new Blob(["ï»¿", html], { type: "application/msword" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -1573,8 +1599,8 @@ export default function Workspace() {
   // Pulls a shared file's content into the collaborative document editor.
   // Files this app itself exported via "DOC" are just HTML under a
   // Word-compatible extension, so those load perfectly. Genuine binary
-  // Word files (.doc/.docx from actual MS Word) aren't parsed — that needs
-  // a real docx-parsing library, which isn't wired up here — so we detect
+  // Word files (.doc/.docx from actual MS Word) aren't parsed â€” that needs
+  // a real docx-parsing library, which isn't wired up here â€” so we detect
   // that case and tell the person plainly instead of dumping garbled bytes
   // into a shared, live-synced document everyone in the workspace sees.
   const handleLoadFileIntoDocument = async (file: SharedFile) => {
@@ -1607,7 +1633,7 @@ export default function Workspace() {
         return;
       }
 
-      // Plain text (.txt, .md) — one <p> per line so breaks are preserved.
+      // Plain text (.txt, .md) â€” one <p> per line so breaks are preserved.
       const html = text
         .split(/\r?\n/)
         .map((line) => {
@@ -1660,7 +1686,7 @@ export default function Workspace() {
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
       // With responseType: "blob", axios can't auto-parse a JSON error
-      // body — it arrives as a Blob, so the real backend message was
+      // body â€” it arrives as a Blob, so the real backend message was
       // being silently swallowed. Unwrap it here so we see what actually
       // failed instead of a generic message.
       let reason = "Download failed";
@@ -1883,7 +1909,7 @@ export default function Workspace() {
                         {file.name}
                       </p>
                       <p className="text-muted-foreground text-xs mt-0.5">
-                        {formatSize(file.size)} · {file.uploader.name}
+                        {formatSize(file.size)} Â· {file.uploader.name}
                       </p>
                       <p className="text-muted-foreground text-[11px] mt-0.5">
                         {new Date(file.createdAt).toLocaleString([], {
@@ -2080,7 +2106,8 @@ export default function Workspace() {
                 onChange={(e) => applyFormat("foreColor", e.target.value)}
                 className="opacity-0 absolute h-8 w-8 cursor-pointer"
               />
-              <span className="text-xs font-bold text-foreground pointer-events-none">
+              <span className="text-xs font-bo
+ld text-foreground pointer-events-none">
                 A
               </span>
             </label>
@@ -2328,9 +2355,9 @@ export default function Workspace() {
               onFocus={() => (isEditorFocused.current = true)}
               onBlur={() => (isEditorFocused.current = false)}
               onKeyUp={handleSelectionActivity}
-              onMouseUp={handleEditorInput}
+              onMouseUp={handleSelectionActivity}
               onScroll={renderCursorOverlay}
-              data-placeholder="Start typing — everyone in this workspace sees updates live, and it's saved automatically."
+              data-placeholder="Start typing â€” everyone in this workspace sees updates live, and it's saved automatically."
               className="h-full overflow-y-auto text-foreground text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:mt-1 [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-1 [&_li]:my-0.5 [&_a]:text-indigo-400 [&_a]:underline [&_hr]:border-border [&_hr]:my-4 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"
             />
             <div
@@ -2354,7 +2381,7 @@ export default function Workspace() {
               <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
                 <MessageSquare size={28} className="opacity-30" />
                 <p className="text-sm text-center px-4">
-                  No messages yet — say hi to get things started
+                  No messages yet â€” say hi to get things started
                 </p>
               </div>
             ) : (
@@ -2454,3 +2481,4 @@ export default function Workspace() {
     </div>
   );
 }
+
