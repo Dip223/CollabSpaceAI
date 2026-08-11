@@ -28,7 +28,7 @@ const allowedOrigins = new Set(
     ...(process.env.CLIENT_URLS || "").split(","),
   ]
     .map((origin) => origin?.trim())
-    .filter(Boolean)
+    .filter((origin): origin is string => Boolean(origin))
 );
 
 app.use(
