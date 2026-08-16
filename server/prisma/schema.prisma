@@ -29,6 +29,7 @@ model User {
   memberships         Membership[]
   uploadedFiles       File[]
   messages            Message[]
+  notifications       Notification[]
 }
 
 model Server {
@@ -44,6 +45,7 @@ model Server {
   files        File[]
   messages     Message[]
   note         Note?
+  notifications Notification[]
 }
 
 model Membership {
@@ -102,4 +104,28 @@ model Message {
 
   sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
   server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+
+  type        String   // "NOTE_EDIT" | "MESSAGE" | "FILE_SHARE"
+
+  // Denormalized rather than relying only on live relations, so a
+  // notification still reads correctly even if the acting member later
+  // leaves the workspace or the workspace is renamed — it's a snapshot of
+  // what happened, not a live lookup.
+  actorName   String
+  serverName  String
+
+  recipientId Int
+  serverId    Int
+
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  recipient   User     @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  server      Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, createdAt])
 }

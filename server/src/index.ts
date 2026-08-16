@@ -9,6 +9,8 @@ import userRoutes from "./routes/userRoutes";
 import serverRoutes from "./routes/serverRoutes";
 import messageRoutes from "./routes/messageRoutes";
 import fileRoutes from "./routes/fileRoutes";
+import noteRoutes from "./routes/noteRoutes";
+import notificationRoutes from "./routes/notificationRoutes";
 import { initSocket } from "./socket/socket";
 import { verifyMailTransport } from "./services/mailService";
 
@@ -51,6 +53,8 @@ app.use("/api/user", userRoutes);
 app.use("/api/server", serverRoutes);
 app.use("/api/message", messageRoutes);
 app.use("/api/file", fileRoutes);
+app.use("/api/note", noteRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.get("/", (_req, res) => {
   res.send("CollabSpace API Running 🚀");

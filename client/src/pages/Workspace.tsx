@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import jsPDF from "jspdf";
+import * as mammoth from "mammoth";
 import {
   FileText,
   Image as ImageIcon,
@@ -668,7 +669,7 @@ export default function Workspace() {
   const [activity, setActivity] = useState<string[]>([]);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
-  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [noteTypers, setNoteTypers] = useState<string[]>([]);
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
@@ -1104,6 +1105,7 @@ export default function Workspace() {
         setNoteStatus("saved");
       } catch (err) {
         console.log(err);
+        setNoteStatus("error");
       }
     }, 700);
 
@@ -1598,11 +1600,12 @@ export default function Workspace() {
 
   // Pulls a shared file's content into the collaborative document editor.
   // Files this app itself exported via "DOC" are just HTML under a
-  // Word-compatible extension, so those load perfectly. Genuine binary
-  // Word files (.doc/.docx from actual MS Word) aren't parsed â€” that needs
-  // a real docx-parsing library, which isn't wired up here â€” so we detect
-  // that case and tell the person plainly instead of dumping garbled bytes
-  // into a shared, live-synced document everyone in the workspace sees.
+  // Word-compatible extension, so those load perfectly via the HTML-sniff
+  // path below. Real .docx files (the modern Word/OOXML format) are parsed
+  // with mammoth.js, entirely client-side — no backend changes needed.
+  // Legacy binary .doc (the old pre-2007 Word format) is a different,
+  // much harder format that mammoth doesn't support, so that one case
+  // still gets an honest message rather than a silently broken result.
   const handleLoadFileIntoDocument = async (file: SharedFile) => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -1612,11 +1615,21 @@ export default function Workspace() {
     );
     if (!ok) return;
 
+    const ext = fileExtension(file.name);
+
     try {
       const res = await downloadFileApi(file.id);
       const blob = new Blob([res.data]);
+
+      if (ext === "docx") {
+        const arrayBuffer = await blob.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        editor.innerHTML = result.value;
+        handleEditorInput();
+        return;
+      }
+
       const text = await blob.text();
-      const ext = fileExtension(file.name);
       const looksLikeHtml = /^\s*(<!doctype html|<html)/i.test(text);
 
       if (looksLikeHtml) {
@@ -1626,14 +1639,14 @@ export default function Workspace() {
         return;
       }
 
-      if (ext === "doc" || ext === "docx") {
+      if (ext === "doc") {
         alert(
-          "This looks like a real Word document rather than one exported from this app, so it can't be parsed here yet. Open it in Word or Google Docs, then copy and paste the text into the shared document instead."
+          "This is a legacy .doc file (the older pre-2007 Word format), which isn't supported yet — only the modern .docx format is. Open it in Word and use \"Save As\" to convert it to .docx, then re-upload and try again."
         );
         return;
       }
 
-      // Plain text (.txt, .md) â€” one <p> per line so breaks are preserved.
+      // Plain text (.txt, .md) — one <p> per line so breaks are preserved.
       const html = text
         .split(/\r?\n/)
         .map((line) => {
@@ -1984,9 +1997,21 @@ export default function Workspace() {
                     : `${noteTypers.length} people editing...`}
                 </span>
               )}
-              <span className="text-muted-foreground">
+              <span
+                className={
+                  noteStatus === "error"
+                    ? "text-amber-400 font-medium"
+                    : "text-muted-foreground"
+                }
+                title={
+                  noteStatus === "error"
+                    ? "Your last change may not be saved. Check your connection and keep this tab open."
+                    : undefined
+                }
+              >
                 {noteStatus === "saving" && "Saving..."}
                 {noteStatus === "saved" && "Saved"}
+                {noteStatus === "error" && "Couldn't save"}
               </span>
             </span>
           </div>
@@ -2355,7 +2380,7 @@ ld text-foreground pointer-events-none">
               onFocus={() => (isEditorFocused.current = true)}
               onBlur={() => (isEditorFocused.current = false)}
               onKeyUp={handleSelectionActivity}
-              onMouseUp={handleSelectionActivity}
+              onMouseUp={handleEditorInput}
               onScroll={renderCursorOverlay}
               data-placeholder="Start typing â€” everyone in this workspace sees updates live, and it's saved automatically."
               className="h-full overflow-y-auto text-foreground text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:mt-1 [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-1 [&_li]:my-0.5 [&_a]:text-indigo-400 [&_a]:underline [&_hr]:border-border [&_hr]:my-4 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"

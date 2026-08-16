@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Bell,
@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import ThemeToggle from "../ThemeToggle";
+import { getUnreadCount } from "../../services/notificationApi";
 
 interface TopbarUser {
   name?: string;
@@ -35,6 +36,13 @@ export default function Topbar({
 }: TopbarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    getUnreadCount()
+      .then((res) => setUnreadCount(res.count || 0))
+      .catch((err) => console.log(err));
+  }, []);
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -94,9 +102,14 @@ export default function Topbar({
         <Link
           to="/notifications"
           title="Notifications"
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="relative text-muted-foreground hover:text-foreground transition-colors"
         >
           <Bell size={19} />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-indigo-500 text-white text-[9px] font-bold flex items-center justify-center">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
         </Link>
 
         <span className="w-px h-6 bg-border" />

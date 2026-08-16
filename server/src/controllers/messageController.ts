@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import prisma from "../config/prisma";
+import { notifyOfflineMembers } from "../services/notificationService";
 
 interface AuthRequest extends Request {
   userId?: number;
@@ -53,6 +54,12 @@ export const sendMessage = async (
         },
       },
     });
+
+    notifyOfflineMembers({
+      type: "MESSAGE",
+      serverId,
+      actorId: req.userId!,
+    }).catch((err) => console.log("notifyOfflineMembers (message) failed:", err));
 
     return res.status(201).json(message);
 
