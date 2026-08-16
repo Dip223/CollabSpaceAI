@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import prisma from "../config/prisma";
+import { notifyOfflineMembers } from "../services/notificationService";
 
 interface AuthRequest extends Request {
   userId?: number;
@@ -78,6 +79,12 @@ export const saveNote = async (
         updatedBy: req.userId!,
       },
     });
+
+    notifyOfflineMembers({
+      type: "NOTE_EDIT",
+      serverId,
+      actorId: req.userId!,
+    }).catch((err) => console.log("notifyOfflineMembers (note) failed:", err));
 
     return res.json({
       content: note.content,

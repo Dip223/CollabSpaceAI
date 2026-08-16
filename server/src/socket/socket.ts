@@ -246,3 +246,15 @@ export const initSocket = (
 
 // Lets controllers such as fileController emit to a workspace.
 export const getIO = () => io;
+
+// Lets controllers (note/message/file) decide who should get an
+// offline notification for something that just happened in a workspace —
+// anyone with an active socket in that workspace's room is "present" and
+// already seeing it live, so they're excluded.
+export const getPresentUserIds = (workspaceId: number): Set<number> => {
+  const roomPresence = presence.get(workspaceId);
+  if (!roomPresence) return new Set();
+  return new Set(
+    Array.from(roomPresence.values()).map((entry) => entry.userId)
+  );
+};

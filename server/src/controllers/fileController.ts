@@ -3,6 +3,7 @@ import prisma from "../config/prisma";
 import cloudinary from "../config/cloudinary";
 import { getIO } from "../socket/socket";
 import { AuthRequest } from "../middleware/authMiddleware";
+import { notifyOfflineMembers } from "../services/notificationService";
 
 const uploadBuffer = (
   buffer: Buffer,
@@ -81,6 +82,12 @@ export const uploadFile = async (
     });
 
     getIO()?.to(`workspace-${serverId}`).emit("file-uploaded", file);
+
+    notifyOfflineMembers({
+      type: "FILE_SHARE",
+      serverId,
+      actorId: req.userId!,
+    }).catch((err) => console.log("notifyOfflineMembers (file) failed:", err));
 
     return res.status(201).json(file);
   } catch (error) {
