@@ -15,6 +15,33 @@ const upload = multer({
   },
 });
 
+router.post("/detect", authMiddleware, upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "Upload a PDF, JPG, PNG, or WEBP file up to 10 MB." });
+  }
+
+  try {
+    const form = new FormData();
+    const bytes = new Uint8Array(req.file.buffer);
+    form.append("file", new Blob([bytes], { type: req.file.mimetype }), req.file.originalname);
+
+    const response = await fetch(aiServiceUrl("/forms/detect-fields"), {
+      method: "POST",
+      headers: aiServiceHeaders(),
+      body: form,
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ message: "Form field detection failed.", detail: await readAiError(response) });
+    }
+
+    return res.json(await response.json());
+  } catch (error) {
+    console.error("Form field detection failed:", error);
+    return res.status(503).json({ message: "Could not reach the AI service. Please try again." });
+  }
+});
+
 router.post("/extract", authMiddleware, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "Upload a PDF, JPG, PNG, or WEBP file up to 10 MB." });

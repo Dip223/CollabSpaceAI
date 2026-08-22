@@ -14,6 +14,13 @@ export type FilledField = {
   source?: string;
 };
 
+export const detectFormFields = async (file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await api.post<{ form_title: string; fields: SmartFormField[] }>("/forms/detect", form);
+  return response.data;
+};
+
 export const extractDocumentText = async (file: File) => {
   const form = new FormData();
   form.append("file", file);
