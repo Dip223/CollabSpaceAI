@@ -8,6 +8,7 @@ import ResetPassword from "./pages/ResetPassword";
 import VerifyEmail from "./pages/VerifyEmail";
 import Workspace from "./pages/Workspace";
 import Notifications from "./pages/Notifications";
+import SmartForms from "./pages/SmartForms";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -77,6 +78,15 @@ function App() {
         element={
           <ProtectedRoute>
             <Notifications />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/smart-forms"
+        element={
+          <ProtectedRoute>
+            <SmartForms />
           </ProtectedRoute>
         }
       />

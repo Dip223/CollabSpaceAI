@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   Calendar,
   UserRound,
+  Sparkles,
 } from "lucide-react";
 
 import Sidebar from "../components/layout/Sidebar";
@@ -294,6 +295,15 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => navigate("/smart-forms")}
+              className="mb-8 flex w-full items-center justify-between gap-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-5 text-left transition-colors hover:bg-indigo-500/15"
+            >
+              <span className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/20"><Sparkles size={20} className="text-indigo-400" /></span><span><span className="block font-semibold text-foreground">Smart Forms</span><span className="mt-0.5 block text-sm text-muted-foreground">Fill forms from PDF/image documents or use voice input.</span></span></span>
+              <ArrowRight size={18} className="text-indigo-400" />
+            </button>
 
             {/* My Workspaces */}
             <div ref={myWorkspacesSectionRef} className="mb-8 scroll-mt-6">
