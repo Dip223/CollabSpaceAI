@@ -5,19 +5,29 @@ import { aiServiceHeaders, aiServiceUrl, readAiError } from "../services/aiServi
 
 const router = Router();
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const ACCEPTED_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+const ACCEPTED_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (_req, file, callback) => {
-    callback(null, ACCEPTED_TYPES.has(file.mimetype));
+    const ext = (file.originalname || "").toLowerCase();
+    const isDoc = ext.endsWith(".doc") || ext.endsWith(".docx");
+    callback(null, ACCEPTED_TYPES.has(file.mimetype) || isDoc);
   },
 });
 
+// ── Detect fields from a blank form image ──────────────────────────────────
 router.post("/detect", authMiddleware, upload.single("file"), async (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ message: "Upload a PDF, JPG, PNG, or WEBP file up to 10 MB." });
+    return res.status(400).json({ message: "Upload a PDF, DOC, DOCX, JPG, PNG, or WEBP file up to 10 MB." });
   }
 
   try {
@@ -42,6 +52,7 @@ router.post("/detect", authMiddleware, upload.single("file"), async (req, res) =
   }
 });
 
+// ── Extract raw text from a single document (OCR fallback) ─────────────────
 router.post("/extract", authMiddleware, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "Upload a PDF, JPG, PNG, or WEBP file up to 10 MB." });
@@ -69,6 +80,7 @@ router.post("/extract", authMiddleware, upload.single("file"), async (req, res) 
   }
 });
 
+// ── Map OCR text onto fields (text-based, legacy) ──────────────────────────
 router.post("/map", authMiddleware, async (req, res) => {
   const extractedText = typeof req.body.extractedText === "string" ? req.body.extractedText.trim() : "";
   const fields = Array.isArray(req.body.formFields) ? req.body.formFields : [];
@@ -102,6 +114,68 @@ router.post("/map", authMiddleware, async (req, res) => {
     return res.json(await response.json());
   } catch (error) {
     console.error("Form mapping failed:", error);
+    return res.status(503).json({ message: "Could not reach the AI service. Please try again." });
+  }
+});
+
+// ── Vision-based document scan: passport, degree, birth cert, etc. ─────────
+router.post("/scan-documents", authMiddleware, upload.array("files", 5), async (req, res) => {
+  const files = req.files as Express.Multer.File[] | undefined;
+
+  if (!files || files.length === 0) {
+    return res.status(400).json({ message: "Upload at least one document (passport, degree, etc.)." });
+  }
+
+  const rawFields = req.body.formFields;
+  if (!rawFields) {
+    return res.status(400).json({ message: "formFields JSON is required." });
+  }
+
+  let formFields: unknown[];
+  try {
+    formFields = JSON.parse(typeof rawFields === "string" ? rawFields : JSON.stringify(rawFields));
+    if (!Array.isArray(formFields) || formFields.length === 0) throw new Error("empty");
+  } catch {
+    return res.status(400).json({ message: "formFields must be a valid non-empty JSON array." });
+  }
+
+  try {
+    const aiForm = new FormData();
+
+    for (const file of files) {
+      const bytes = new Uint8Array(file.buffer);
+      aiForm.append("files", new Blob([bytes], { type: file.mimetype }), file.originalname);
+    }
+
+    // Sanitise fields before forwarding
+    type RawField = { id?: unknown; label?: unknown; type?: unknown; required?: unknown };
+    const sanitisedFields = (formFields as RawField[])
+      .filter((f): f is Required<Pick<RawField, "id" | "label">> & RawField =>
+        Boolean(f && typeof f === "object" && typeof f.id === "string" && typeof f.label === "string")
+      )
+      .slice(0, 100)
+      .map((f) => ({
+        id: (f.id as string).slice(0, 100),
+        label: (f.label as string).slice(0, 160),
+        type: typeof f.type === "string" && ["text", "date", "email", "number"].includes(f.type) ? f.type : "text",
+        required: Boolean(f.required),
+      }));
+
+    aiForm.append("form_fields", JSON.stringify(sanitisedFields));
+
+    const response = await fetch(aiServiceUrl("/forms/extract-documents"), {
+      method: "POST",
+      headers: aiServiceHeaders(),
+      body: aiForm,
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ message: "AI document scan failed.", detail: await readAiError(response) });
+    }
+
+    return res.json(await response.json());
+  } catch (error) {
+    console.error("Document scan failed:", error);
     return res.status(503).json({ message: "Could not reach the AI service. Please try again." });
   }
 });
