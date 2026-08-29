@@ -6,6 +6,9 @@ import {
   getMyServers,
   getServer,
   serverMembers,
+  renameServer,
+  removeMember,
+  leaveServer,
 } from "../controllers/serverController";
 
 import { authMiddleware } from "../middleware/authMiddleware";
@@ -45,6 +48,27 @@ router.get(
   "/members/:id",
   authMiddleware,
   serverMembers
+);
+
+// ================= RENAME WORKSPACE (admin only) =================
+router.put(
+  "/:id",
+  authMiddleware,
+  renameServer
+);
+
+// ================= REMOVE MEMBER (admin only) =================
+router.delete(
+  "/:id/members/:userId",
+  authMiddleware,
+  removeMember
+);
+
+// ================= LEAVE / DELETE WORKSPACE =================
+router.delete(
+  "/:id/leave",
+  authMiddleware,
+  leaveServer
 );
 
 export default router;

@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { scanDocumentsWithAI, type SmartFormField } from "../../services/smartFormApi";
-import { exportFormAsDoc, exportFormAsPdf, isCheckboxValue } from "../../utils/formExport";
+import { exportFormAsPdf, isCheckboxValue } from "../../utils/formExport";
 import VoiceInput from "./VoiceInput";
 
 
@@ -56,10 +56,6 @@ export default function SmartFormFill({ formTitle, fields, formImagesBase64, onS
 
   const handleExportPdf = () => {
     exportFormAsPdf(formTitle, fields, values, formImagesBase64);
-  };
-
-  const handleExportDoc = () => {
-    exportFormAsDoc(formTitle, fields, values, formImagesBase64);
   };
 
 
@@ -554,23 +550,15 @@ export default function SmartFormFill({ formTitle, fields, formImagesBase64, onS
               Confirm &amp; Export Form
             </button>
 
-            {/* Direct Export Buttons */}
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            {/* Direct Export Button */}
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={handleExportPdf}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-400 transition-colors hover:bg-indigo-500/20"
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-400 transition-colors hover:bg-indigo-500/20"
               >
                 <FileDown className="h-3.5 w-3.5" />
                 Export PDF
-              </button>
-              <button
-                type="button"
-                onClick={handleExportDoc}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-400 transition-colors hover:bg-blue-500/20"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Export DOC
               </button>
             </div>
           </div>
@@ -642,7 +630,7 @@ export default function SmartFormFill({ formTitle, fields, formImagesBase64, onS
 
             <p className="mb-3 text-xs font-medium text-muted-foreground">Download your completed form as:</p>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <button
                 type="button"
                 onClick={handleExportPdf}
@@ -654,20 +642,6 @@ export default function SmartFormFill({ formTitle, fields, formImagesBase64, onS
                 <div>
                   <span className="block text-sm font-semibold text-foreground">PDF Document</span>
                   <span className="block text-[11px] text-muted-foreground">Styled PDF file (.pdf)</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleExportDoc}
-                className="flex items-center gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 p-3.5 text-left transition-all hover:border-blue-500 hover:bg-blue-500/20 group"
-              >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-md group-hover:scale-105 transition-transform">
-                  <FileText className="h-5 w-5" />
-                </span>
-                <div>
-                  <span className="block text-sm font-semibold text-foreground">Word Document</span>
-                  <span className="block text-[11px] text-muted-foreground">Editable Doc file (.doc)</span>
                 </div>
               </button>
             </div>
