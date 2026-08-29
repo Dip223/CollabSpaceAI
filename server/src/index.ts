@@ -48,7 +48,11 @@ app.use(
   })
 );
 
-app.use(express.json());
+// Default is 100kb, which any document containing even one embedded image
+// blows past instantly — that's what was causing "Couldn't save" on the
+// shared document the moment an image was inserted. 20mb comfortably
+// covers a document with 20+ (compressed) images plus a lot of text.
+app.use(express.json({ limit: "20mb" }));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);

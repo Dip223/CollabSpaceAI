@@ -76,8 +76,10 @@ export const initSocket = (
       credentials: true,
     },
 
-    // Allows rich note HTML including a reasonably sized inserted image.
-    maxHttpBufferSize: 5 * 1024 * 1024,
+    // Matches the 20mb limit on the HTTP save endpoint — otherwise a
+    // document that successfully saves could still silently fail to
+    // live-broadcast to teammates once it's large enough.
+    maxHttpBufferSize: 20 * 1024 * 1024,
 
     // More stable on slow Wi-Fi/mobile networks.
     pingTimeout: 30000,
@@ -188,7 +190,7 @@ export const initSocket = (
         if (
           data.workspaceId !== socket.workspaceId ||
           typeof data.content !== "string" ||
-          data.content.length > 4_000_000
+          data.content.length > 20_000_000
         ) {
           return;
         }
@@ -220,7 +222,7 @@ export const initSocket = (
           data.workspaceId !== socket.workspaceId ||
           !Number.isInteger(data.offset) ||
           data.offset < 0 ||
-          data.offset > 4_000_000
+          data.offset > 20_000_000
         ) {
           return;
         }

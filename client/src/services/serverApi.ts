@@ -21,3 +21,15 @@ export const getWorkspace = (id: number) => {
 export const getWorkspaceMembers = (id: number) => {
   return api.get(`/server/members/${id}`);
 };
+
+export const renameWorkspace = (id: number, name: string) => {
+  return api.put(`/server/${id}`, { name });
+};
+
+export const removeMember = (id: number, userId: number) => {
+  return api.delete(`/server/${id}/members/${userId}`);
+};
+
+export const leaveWorkspace = (id: number) => {
+  return api.delete(`/server/${id}/leave`);
+};

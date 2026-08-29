@@ -28,12 +28,15 @@ import {
   List,
   ListOrdered,
   Link2,
-  Minus,
   Eraser,
   Import,
   ArrowLeft,
   Table,
   Square,
+  RotateCcw,
+  RotateCw,
+  Pencil,
+  X,
   FileDown,
 } from "lucide-react";
 
@@ -42,6 +45,8 @@ import ThemeToggle from "../components/ThemeToggle";
 import {
   getWorkspace,
   getWorkspaceMembers,
+  renameWorkspace as renameWorkspaceApi,
+  removeMember as removeMemberApi,
 } from "../services/serverApi";
 
 import {
@@ -493,6 +498,26 @@ const resolveRunStyle = (el: Element, root: Element): Omit<TextRun, "text"> => {
   };
 };
 
+// The image toolbar's align buttons (applyImageAlign in the component
+// below) center/right-align an image via display:block + margin:auto on
+// the image itself — a different mechanism than the inherited text-align
+// resolveRunStyle checks above, so an explicitly-aligned image needs its
+// own detection here. Falls back to the inherited paragraph alignment for
+// an image that was never explicitly aligned via the toolbar. Reads the
+// INLINE style specifically (el.style, not getComputedStyle) — computed
+// style resolves an authored "auto" margin to its used pixel value, which
+// would make an exact string match against "auto" always fail.
+const detectImageAlign = (el: HTMLImageElement, root: Element): Align => {
+  if (el.style.display === "block") {
+    const ml = el.style.marginLeft;
+    const mr = el.style.marginRight;
+    if (ml === "auto" && mr === "auto") return "center";
+    if (ml === "auto") return "right";
+    if (mr === "auto") return "left";
+  }
+  return resolveRunStyle(el, root).align;
+};
+
 const hexToRgb = (hex: string): [number, number, number] | null => {
   const m = hex.replace("#", "").match(/^([0-9a-f]{6})$/i);
   if (!m) return null;
@@ -559,11 +584,23 @@ const walkForPdf = (
     const imgEl = el as HTMLImageElement;
     const src = imgEl.currentSrc || imgEl.src;
     const format = imageFormatFromDataUrl(src);
-    const width = imgEl.naturalWidth || imgEl.width || 0;
-    const height = imgEl.naturalHeight || imgEl.height || 0;
+    // getBoundingClientRect() — the size as actually displayed right now —
+    // rather than naturalWidth/naturalHeight, which are the source file's
+    // intrinsic pixel dimensions and ignore any resize (drag handle or the
+    // size presets) or a replaced image entirely. This is exactly what the
+    // shapes branch below already does; images were the one inconsistent
+    // case.
+    const rect = imgEl.getBoundingClientRect();
+    const width = rect.width || imgEl.naturalWidth || imgEl.width || 0;
+    const height = rect.height || imgEl.naturalHeight || imgEl.height || 0;
     if (format && width > 0 && height > 0) {
-      const { align } = resolveRunStyle(el, root);
-      tokens.push({ image: src, format, width, height, align });
+      tokens.push({
+        image: src,
+        format,
+        width,
+        height,
+        align: detectImageAlign(imgEl, root),
+      });
     }
     return;
   }
@@ -668,6 +705,8 @@ export default function Workspace() {
   const [onlineUsers, setOnlineUsers] = useState<PresenceEntry[]>([]);
   const [activity, setActivity] = useState<string[]>([]);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [isRenamingWorkspace, setIsRenamingWorkspace] = useState(false);
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
 
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [noteTypers, setNoteTypers] = useState<string[]>([]);
@@ -688,10 +727,23 @@ export default function Workspace() {
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(3);
 
+  const [elementToolbar, setElementToolbar] = useState<{
+    type: "image" | "shape";
+    top: number;
+    left: number;
+    handleTop: number;
+    handleLeft: number;
+  } | null>(null);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const noteImageInputRef = useRef<HTMLInputElement>(null);
+  const replaceImageInputRef = useRef<HTMLInputElement>(null);
   const insertMenuRef = useRef<HTMLDivElement>(null);
+  const elementToolbarRef = useRef<HTMLDivElement>(null);
+  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  const selectedElRef = useRef<HTMLElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const cursorLayerRef = useRef<HTMLDivElement>(null);
   const isEditorFocused = useRef(false);
@@ -933,6 +985,23 @@ export default function Workspace() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openMenu]);
 
+  useEffect(() => {
+    if (!elementToolbar) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const clickedToolbar =
+        elementToolbarRef.current?.contains(target) ?? false;
+      const clickedSelectedEl =
+        selectedElRef.current?.contains(target) ?? false;
+      if (!clickedToolbar && !clickedSelectedEl) {
+        setElementToolbar(null);
+        selectedElRef.current = null;
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [elementToolbar]);
+
   const loadWorkspace = async () => {
     try {
       const workspaceRes = await getWorkspace(workspaceId);
@@ -1162,20 +1231,274 @@ export default function Workspace() {
     setOpenMenu(null);
   };
 
-  // Images are embedded as base64 data URLs directly in the note's HTML â€”
+  // Uncompressed phone photos routinely run 3-8MB each — even with the
+  // save/broadcast limits raised, 20 of those would make the document
+  // slow to save, slow to sync live, and slow to scroll through. This
+  // downscales to a sane max dimension and re-encodes as JPEG before the
+  // image ever becomes part of the document, typically landing well
+  // under 300KB per image while still looking sharp on screen and in
+  // exports. Falls back to the original if anything goes wrong rather
+  // than blocking the insert.
+  const MAX_IMAGE_DIMENSION = 1400;
+  const IMAGE_JPEG_QUALITY = 0.82;
+
+  const compressImageToDataUrl = (source: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const original = reader.result;
+        if (typeof original !== "string") {
+          reject(new Error("Could not read file"));
+          return;
+        }
+
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(
+            1,
+            MAX_IMAGE_DIMENSION / Math.max(img.width, img.height)
+          );
+          const targetW = Math.round(img.width * scale);
+          const targetH = Math.round(img.height * scale);
+
+          const canvas = document.createElement("canvas");
+          canvas.width = targetW;
+          canvas.height = targetH;
+          const ctx = canvas.getContext("2d");
+
+          if (!ctx) {
+            resolve(original);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+
+          try {
+            const compressed = canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY);
+            // A tiny or already-compressed image can occasionally come
+            // back larger after re-encoding — only use it if it helped.
+            resolve(compressed.length < original.length ? compressed : original);
+          } catch {
+            resolve(original);
+          }
+        };
+        img.onerror = () => resolve(original);
+        img.src = original;
+      };
+      reader.onerror = () => reject(new Error("Could not read file"));
+      reader.readAsDataURL(source);
+    });
+  };
+
+  // Images are embedded as base64 data URLs directly in the note's HTML —
   // simple and works with the existing save/broadcast pipeline with no
-  // backend changes, but it does bloat the document for large images.
-  // Prefer the "Shared Files" panel for anything sizeable.
-  const insertImageFromFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      if (typeof dataUrl !== "string") return;
+  // backend changes. compressImageToDataUrl above is what keeps that
+  // practical at real-world image sizes.
+  const insertImageFromFile = async (file: File) => {
+    try {
+      const dataUrl = await compressImageToDataUrl(file);
       editorRef.current?.focus();
       document.execCommand("insertImage", false, dataUrl);
       handleEditorInput();
+    } catch (err) {
+      alert("Couldn't insert that image.");
+    }
+  };
+
+  // ================= IMAGE / SHAPE FLOATING TOOLBAR =================
+  // Clicking an inserted image or shape shows a small floating toolbar
+  // above (or below, near the top of the scroll area) the element, similar
+  // in spirit to Word/Docs' own image toolbar — just scoped to what's
+  // actually implementable here: resize presets, alignment, replace, and
+  // delete for images; rotate and delete for shapes. Native browser resize
+  // handles (Chrome/Edge draw these automatically on a clicked <img> inside
+  // a contentEditable region) still work alongside this for freeform drag
+  // resizing — this toolbar adds what dragging alone can't do.
+
+  const closeElementToolbar = () => {
+    setElementToolbar(null);
+    selectedElRef.current = null;
+  };
+
+  const positionElementToolbar = (
+    el: HTMLElement,
+    type: "image" | "shape"
+  ) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const editorRect = editor.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const relTop = elRect.top - editorRect.top;
+    const relLeft = elRect.left - editorRect.left;
+    const placeAbove = relTop > 50;
+    const top = placeAbove ? relTop - 46 : relTop + elRect.height + 8;
+
+    selectedElRef.current = el;
+    setElementToolbar({
+      type,
+      top,
+      left: Math.max(4, relLeft),
+      handleTop: elRect.bottom - editorRect.top - 6,
+      handleLeft: elRect.right - editorRect.left - 6,
+    });
+  };
+
+  const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+
+    if (target.tagName === "IMG") {
+      positionElementToolbar(target, "image");
+      return;
+    }
+
+    if (target.hasAttribute("data-shape")) {
+      positionElementToolbar(target, "shape");
+      return;
+    }
+
+    closeElementToolbar();
+  };
+
+  // Double-clicking an inserted image opens it enlarged in a full-screen
+  // overlay — separate from the click-to-select-and-edit toolbar above.
+  const handleEditorDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "IMG") {
+      setLightboxSrc((target as HTMLImageElement).src);
+    }
+  };
+
+  // Freeform drag-to-resize for images, since native browser resize
+  // handles on contentEditable <img> elements turned out to be
+  // inconsistent to rely on. The handle's own position is updated via
+  // direct DOM writes during the drag (not React state) so a resize
+  // doesn't trigger a re-render on every pixel of mouse movement — the
+  // toolbar and React state only resync once, on mouseup.
+  const startImageResizeDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = selectedElRef.current;
+    const editor = editorRef.current;
+    if (!el || !editor) return;
+
+    const startX = e.clientX;
+    const startWidth = el.getBoundingClientRect().width;
+    const maxWidth = Math.max(80, editor.clientWidth - 48);
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.max(40, Math.min(startWidth + delta, maxWidth));
+      el.style.width = `${newWidth}px`;
+      el.style.removeProperty("height");
+
+      const editorRect = editor.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      if (resizeHandleRef.current) {
+        resizeHandleRef.current.style.top = `${elRect.bottom - editorRect.top - 6}px`;
+        resizeHandleRef.current.style.left = `${elRect.right - editorRect.left - 6}px`;
+      }
     };
-    reader.readAsDataURL(file);
+
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (selectedElRef.current) {
+        positionElementToolbar(selectedElRef.current, "image");
+      }
+      handleEditorInput();
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  // null resets to the image's natural size (still capped by the editor's
+  // own max-width:100% so nothing can overflow the document column).
+  const applyImageSize = (widthPercent: number | null) => {
+    const el = selectedElRef.current;
+    if (!el) return;
+    if (widthPercent === null) {
+      el.style.removeProperty("width");
+    } else {
+      el.style.width = `${widthPercent}%`;
+    }
+    // Always clear height — otherwise a previous drag-resize (which sets
+    // explicit pixel width AND height) would leave a stale height fighting
+    // the new width and distorting the image.
+    el.style.removeProperty("height");
+    // The image's size just changed, so the toolbar/handle positions
+    // computed for the OLD size are now stale — resync them, same as
+    // startImageResizeDrag does after a manual drag.
+    positionElementToolbar(el, "image");
+    handleEditorInput();
+  };
+
+  const applyImageAlign = (
+    align: "left" | "center" | "right" | "inline"
+  ) => {
+    const el = selectedElRef.current;
+    if (!el) return;
+
+    if (align === "inline") {
+      el.style.display = "inline-block";
+      el.style.removeProperty("margin-left");
+      el.style.removeProperty("margin-right");
+    } else {
+      el.style.display = "block";
+      el.style.marginLeft = align === "right" ? "auto" : "0";
+      el.style.marginRight = align === "left" ? "auto" : "0";
+      if (align === "center") {
+        el.style.marginLeft = "auto";
+        el.style.marginRight = "auto";
+      }
+    }
+    // Alignment can shift the image horizontally (and in block mode, even
+    // vertically if line-wrapping changes) — resync for the same reason
+    // as applyImageSize above.
+    positionElementToolbar(el, "image");
+    handleEditorInput();
+  };
+
+  const replaceSelectedImage = async (file: File) => {
+    const el = selectedElRef.current;
+    if (!el || el.tagName !== "IMG") return;
+    try {
+      const dataUrl = await compressImageToDataUrl(file);
+      const imgEl = el as HTMLImageElement;
+      // Wait for the new image to actually render before repositioning —
+      // a replacement can have different natural dimensions, and reading
+      // getBoundingClientRect() before it's loaded would capture the old
+      // image's now-stale size.
+      imgEl.onload = () => {
+        positionElementToolbar(imgEl, "image");
+        imgEl.onload = null;
+      };
+      imgEl.src = dataUrl;
+      handleEditorInput();
+    } catch {
+      alert("Couldn't replace that image.");
+    }
+  };
+
+  const deleteSelectedElement = () => {
+    const el = selectedElRef.current;
+    if (!el) return;
+    el.remove();
+    closeElementToolbar();
+    handleEditorInput();
+  };
+
+  const getShapeRotation = (el: HTMLElement): number => {
+    const match = el.style.transform.match(/rotate\((-?\d+(?:\.\d+)?)deg\)/);
+    return match ? parseFloat(match[1]) : 0;
+  };
+
+  const rotateSelectedShape = (deltaDeg: number) => {
+    const el = selectedElRef.current;
+    if (!el) return;
+    const next = (getShapeRotation(el) + deltaDeg + 360) % 360;
+    el.style.transform = `rotate(${next}deg)`;
+    handleEditorInput();
   };
 
   const exportPdf = () => {
@@ -1671,15 +1994,10 @@ export default function Workspace() {
     try {
       const res = await downloadFileApi(file.id);
       const blob = new Blob([res.data], { type: file.mimeType });
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result;
-        if (typeof dataUrl !== "string") return;
-        editor.focus();
-        document.execCommand("insertImage", false, dataUrl);
-        handleEditorInput();
-      };
-      reader.readAsDataURL(blob);
+      const dataUrl = await compressImageToDataUrl(blob);
+      editor.focus();
+      document.execCommand("insertImage", false, dataUrl);
+      handleEditorInput();
     } catch (err) {
       alert("Couldn't insert that image into the document.");
     }
@@ -1721,12 +2039,56 @@ export default function Workspace() {
 
   const onlineUserIds = new Set(onlineUsers.map((u) => u.userId));
   const me = currentUser();
+  const isAdmin = workspace?.ownerId === me.id;
 
   const handleCopyInvite = () => {
     if (!workspace) return;
     navigator.clipboard.writeText(workspace.inviteCode);
     setCopiedInvite(true);
     setTimeout(() => setCopiedInvite(false), 1500);
+  };
+
+  const startRenameWorkspace = () => {
+    if (!workspace) return;
+    setWorkspaceNameDraft(workspace.name);
+    setIsRenamingWorkspace(true);
+  };
+
+  const submitRenameWorkspace = async () => {
+    const current = workspace;
+    if (!current) return;
+    const name = workspaceNameDraft.trim();
+
+    if (!name || name === current.name) {
+      setIsRenamingWorkspace(false);
+      return;
+    }
+
+    try {
+      await renameWorkspaceApi(current.id, name);
+      setWorkspace({ ...current, name });
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Couldn't rename the workspace.");
+    } finally {
+      setIsRenamingWorkspace(false);
+    }
+  };
+
+  const handleRemoveMember = async (member: Member) => {
+    const current = workspace;
+    if (!current) return;
+
+    const ok = confirm(
+      `Remove ${member.name} from this workspace? They'll need a new invite code to rejoin.`
+    );
+    if (!ok) return;
+
+    try {
+      await removeMemberApi(current.id, member.id);
+      setMembers((prev) => prev.filter((m) => m.id !== member.id));
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Couldn't remove that member.");
+    }
   };
 
   const toolbarBtn = (active: boolean) =>
@@ -1751,9 +2113,34 @@ export default function Workspace() {
             </Link>
 
             <div>
-              <h1 className="text-3xl font-bold text-foreground tracking-tight">
-                {workspace?.name || "Loading..."}
-              </h1>
+              {isRenamingWorkspace ? (
+                <input
+                  autoFocus
+                  value={workspaceNameDraft}
+                  onChange={(e) => setWorkspaceNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitRenameWorkspace();
+                    if (e.key === "Escape") setIsRenamingWorkspace(false);
+                  }}
+                  onBlur={submitRenameWorkspace}
+                  className="text-3xl font-bold text-foreground tracking-tight bg-background rounded-lg px-2 py-0.5 outline-none ring-1 ring-indigo-500 w-full max-w-md"
+                />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h1 className="text-3xl font-bold text-foreground tracking-tight">
+                    {workspace?.name || "Loading..."}
+                  </h1>
+                  {isAdmin && (
+                    <button
+                      onClick={startRenameWorkspace}
+                      title="Rename workspace"
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                </div>
+              )}
 
               <button
                 onClick={handleCopyInvite}
@@ -1839,10 +2226,11 @@ export default function Workspace() {
             <div className="p-3 space-y-1.5 overflow-y-auto flex-1">
               {members.map((member) => {
                 const online = onlineUserIds.has(member.id);
+                const isMemberAdmin = member.id === workspace?.ownerId;
                 return (
                   <div
                     key={member.id}
-                    className="rounded-xl p-2.5 flex items-center gap-3 hover:bg-accent transition-colors"
+                    className="group rounded-xl p-2.5 flex items-center gap-3 hover:bg-accent transition-colors"
                   >
                     <div className="relative shrink-0">
                       <div
@@ -1859,14 +2247,35 @@ export default function Workspace() {
                       />
                     </div>
 
-                    <div className="min-w-0">
-                      <p className="text-foreground text-sm font-medium truncate">
-                        {member.name}
-                      </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-foreground text-sm font-medium truncate">
+                          {member.name}
+                        </p>
+                        <span
+                          className={`text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                            isMemberAdmin
+                              ? "text-indigo-400 bg-indigo-500/10"
+                              : "text-muted-foreground bg-muted"
+                          }`}
+                        >
+                          {isMemberAdmin ? "Admin" : "Member"}
+                        </span>
+                      </div>
                       <p className="text-muted-foreground text-xs truncate">
                         {online ? "Online" : "Offline"}
                       </p>
                     </div>
+
+                    {isAdmin && !isMemberAdmin && (
+                      <button
+                        onClick={() => handleRemoveMember(member)}
+                        title={`Remove ${member.name}`}
+                        className="text-muted-foreground hover:text-red-400 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -2333,15 +2742,6 @@ ld text-foreground pointer-events-none">
             <button
               type="button"
               onPointerDown={(e) => e.preventDefault()}
-              onClick={() => applyFormat("insertHorizontalRule")}
-              className={toolbarBtn(false)}
-              title="Horizontal line"
-            >
-              <Minus size={15} />
-            </button>
-            <button
-              type="button"
-              onPointerDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("removeFormat")}
               className={toolbarBtn(false)}
               title="Clear formatting"
@@ -2381,16 +2781,193 @@ ld text-foreground pointer-events-none">
               onBlur={() => (isEditorFocused.current = false)}
               onKeyUp={handleSelectionActivity}
               onMouseUp={handleEditorInput}
-              onScroll={renderCursorOverlay}
+              onClick={handleEditorClick}
+              onDoubleClick={handleEditorDoubleClick}
+              onScroll={() => {
+                renderCursorOverlay();
+                // Position was computed at click time and doesn't track
+                // scroll — simplest correct behavior is to close it rather
+                // than have it drift away from the element it points at.
+                closeElementToolbar();
+              }}
               data-placeholder="Start typing â€” everyone in this workspace sees updates live, and it's saved automatically."
-              className="h-full overflow-y-auto text-foreground text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:mt-1 [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-1 [&_li]:my-0.5 [&_a]:text-indigo-400 [&_a]:underline [&_hr]:border-border [&_hr]:my-4 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2"
+              className="h-full overflow-y-auto text-foreground text-sm leading-relaxed p-6 outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:mt-1 [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-1 [&_li]:my-0.5 [&_a]:text-indigo-400 [&_a]:underline [&_hr]:border-border [&_hr]:my-4 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2 [&_img]:cursor-pointer"
             />
             <div
               ref={cursorLayerRef}
               className="absolute inset-0 pointer-events-none overflow-hidden"
             />
+
+            {elementToolbar && (
+              <div
+                ref={elementToolbarRef}
+                className="absolute z-30 flex items-center gap-0.5 bg-card ring-1 ring-border rounded-lg shadow-xl px-1.5 py-1"
+                style={{ top: elementToolbar.top, left: elementToolbar.left }}
+              >
+                {elementToolbar.type === "image" ? (
+                  <>
+                    <span className="text-[10px] text-muted-foreground px-1 select-none">
+                      Size
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => applyImageSize(25)}
+                      className="text-xs px-2 py-1 rounded hover:bg-accent text-foreground"
+                      title="Small"
+                    >
+                      S
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyImageSize(50)}
+                      className="text-xs px-2 py-1 rounded hover:bg-accent text-foreground"
+                      title="Medium"
+                    >
+                      M
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyImageSize(100)}
+                      className="text-xs px-2 py-1 rounded hover:bg-accent text-foreground"
+                      title="Large"
+                    >
+                      L
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyImageSize(null)}
+                      className="text-xs px-2 py-1 rounded hover:bg-accent text-foreground"
+                      title="Original size"
+                    >
+                      Orig
+                    </button>
+
+                    <span className="w-px h-5 bg-border mx-1" />
+
+                    <button
+                      type="button"
+                      onClick={() => applyImageAlign("left")}
+                      className="p-1.5 rounded hover:bg-accent text-foreground"
+                      title="Align left"
+                    >
+                      <AlignLeft size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyImageAlign("center")}
+                      className="p-1.5 rounded hover:bg-accent text-foreground"
+                      title="Align center"
+                    >
+                      <AlignCenter size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyImageAlign("right")}
+                      className="p-1.5 rounded hover:bg-accent text-foreground"
+                      title="Align right"
+                    >
+                      <AlignRight size={14} />
+                    </button>
+
+                    <span className="w-px h-5 bg-border mx-1" />
+
+                    <button
+                      type="button"
+                      onClick={() => replaceImageInputRef.current?.click()}
+                      className="p-1.5 rounded hover:bg-accent text-foreground"
+                      title="Replace image"
+                    >
+                      <Upload size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedElement}
+                      className="p-1.5 rounded hover:bg-red-500/10 text-red-400"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => rotateSelectedShape(-15)}
+                      className="p-1.5 rounded hover:bg-accent text-foreground"
+                      title="Rotate left 15°"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => rotateSelectedShape(15)}
+                      className="p-1.5 rounded hover:bg-accent text-foreground"
+                      title="Rotate right 15°"
+                    >
+                      <RotateCw size={14} />
+                    </button>
+
+                    <span className="w-px h-5 bg-border mx-1" />
+
+                    <button
+                      type="button"
+                      onClick={deleteSelectedElement}
+                      className="p-1.5 rounded hover:bg-red-500/10 text-red-400"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {elementToolbar?.type === "image" && (
+              <div
+                ref={resizeHandleRef}
+                onMouseDown={startImageResizeDrag}
+                title="Drag to resize"
+                className="absolute z-30 h-3.5 w-3.5 rounded-full bg-indigo-500 ring-2 ring-white shadow cursor-nwse-resize"
+                style={{
+                  top: elementToolbar.handleTop,
+                  left: elementToolbar.handleLeft,
+                }}
+              />
+            )}
+
+            <input
+              ref={replaceImageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) replaceSelectedImage(file);
+                e.target.value = "";
+              }}
+            />
           </div>
         </div>
+
+        {lightboxSrc && (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
+            onClick={() => setLightboxSrc(null)}
+          >
+            <img
+              src={lightboxSrc}
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-full max-h-full rounded-lg shadow-2xl"
+            />
+            <button
+              onClick={() => setLightboxSrc(null)}
+              title="Close"
+              className="absolute top-6 right-6 h-10 w-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+        )}
 
         {/* Chat */}
         <div className="lg:col-span-3 bg-card rounded-2xl ring-1 ring-border shadow-xl shadow-black/20 flex flex-col overflow-hidden h-[420px] lg:h-[760px]">

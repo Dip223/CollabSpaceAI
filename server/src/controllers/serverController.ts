@@ -206,6 +206,197 @@ export const getServer = async (
   }
 };
 
+// ================= RENAME WORKSPACE (admin only) =================
+
+export const renameServer = async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const serverId = Number(req.params.id);
+    const name = String(req.body.name || "").trim();
+
+    if (!name) {
+      return res.status(400).json({
+        message: "Workspace name is required",
+      });
+    }
+
+    const server = await prisma.server.findUnique({
+      where: { id: serverId },
+    });
+
+    if (!server) {
+      return res.status(404).json({
+        message: "Workspace not found",
+      });
+    }
+
+    if (server.ownerId !== req.userId) {
+      return res.status(403).json({
+        message: "Only the workspace admin can rename it",
+      });
+    }
+
+    const updated = await prisma.server.update({
+      where: { id: serverId },
+      data: { name },
+    });
+
+    return res.json({
+      message: "Workspace renamed",
+      server: updated,
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+// ================= REMOVE MEMBER (admin only) =================
+
+export const removeMember = async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const serverId = Number(req.params.id);
+    const targetUserId = Number(req.params.userId);
+
+    const server = await prisma.server.findUnique({
+      where: { id: serverId },
+    });
+
+    if (!server) {
+      return res.status(404).json({
+        message: "Workspace not found",
+      });
+    }
+
+    if (server.ownerId !== req.userId) {
+      return res.status(403).json({
+        message: "Only the workspace admin can remove members",
+      });
+    }
+
+    if (targetUserId === server.ownerId) {
+      return res.status(400).json({
+        message: "The admin can't remove themselves from the workspace",
+      });
+    }
+
+    await prisma.membership.deleteMany({
+      where: {
+        serverId,
+        userId: targetUserId,
+      },
+    });
+
+    return res.json({
+      message: "Member removed",
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+// ================= LEAVE / DELETE WORKSPACE =================
+// This is what powers the "Delete" button on a workspace card — for a
+// regular member it just removes their own membership. For the admin
+// (the workspace owner) it removes them too, but instead of destroying
+// the workspace outright, ownership passes to whichever remaining member
+// joined earliest. Only when the very last member leaves does the
+// workspace (and everything in it — files, messages, the shared note,
+// notifications) actually get deleted, via the existing onDelete: Cascade
+// relations already defined on those models.
+
+export const leaveServer = async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const serverId = Number(req.params.id);
+    const userId = req.userId!;
+
+    const server = await prisma.server.findUnique({
+      where: { id: serverId },
+    });
+
+    if (!server) {
+      return res.status(404).json({
+        message: "Workspace not found",
+      });
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_serverId: {
+          userId,
+          serverId,
+        },
+      },
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        message: "You are not a member of this workspace",
+      });
+    }
+
+    const wasOwner = server.ownerId === userId;
+
+    await prisma.membership.delete({
+      where: {
+        userId_serverId: {
+          userId,
+          serverId,
+        },
+      },
+    });
+
+    const remaining = await prisma.membership.findMany({
+      where: { serverId },
+      orderBy: { joinedAt: "asc" },
+      take: 1,
+    });
+
+    if (remaining.length === 0) {
+      // Nobody left — the workspace itself goes too.
+      await prisma.server.delete({ where: { id: serverId } });
+
+      return res.json({
+        message: "Workspace deleted",
+        deleted: true,
+      });
+    }
+
+    if (wasOwner) {
+      await prisma.server.update({
+        where: { id: serverId },
+        data: { ownerId: remaining[0].userId },
+      });
+    }
+
+    return res.json({
+      message: "Left workspace",
+      deleted: false,
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
 // ================= GET WORKSPACE MEMBERS =================
 
 export const serverMembers = async (
